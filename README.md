@@ -33,14 +33,15 @@ criteria, `learning-records/` logs what has actually been learned and why the
 plan changed (e.g. the substrate switch from JS to PyTorch), and each lesson is a
 self-contained HTML page with exercises graded by a CLI.
 
-- `lessons/` — `0000-matrices-for-attention.html`, `0001-attention-as-a-weighted-average.html`
+- `lessons/` — `0000-matrices-for-attention.html` (plain JavaScript), then `0001-attention-as-a-weighted-average.html`, `0002-the-mask-and-the-scale.html`, `0003-several-weighted-averages.html`
 - `reference/` — glossary, matrix ops, Python-for-JS-devs, scaled dot-product attention
-- `exercises/0001_attention.py` + `exercises/solutions/` — the code the learner edits
-- `bin/lesson`, `bin/grade`, `bin/grader` — serve a lesson, grade one exercise, run the grading server
+- `exercises/0001_attention.py` … `0003_multihead.py` + `exercises/solutions/` — the code the learner edits, shipped as stubs
+- `bin/lesson`, `bin/grade`, `bin/grader` — serve a lesson, grade one exercise, run the grading server; `bin/record` writes the next learning record
 - `tools/grader/` — the grader core, per-lesson checks, CLI and HTTP server
-- `RESOURCES.md`, `NOTES.md` — source material and working notes
+- `tools/check_lessons.py` — syntax-checks every inlined lesson script and asset
+- `MISSION.md`, `NOTES.md`, `RESOURCES.md`, `HOW.md`, `README.md` — mission, working notes, sources, and how the machinery works
 
-The loop is: read the lesson, edit `exercises/<lesson>.py`, run `./bin/grade <lesson>`.
+The loop is: `./bin/grader` to serve the pages, read a lesson, edit `exercises/<lesson>.py`, run `./bin/grade <lesson>` (or click the page's button, which runs the same checks and shows your script's own output). `learning-records/` is untracked, so it may be absent; `./bin/record` creates it. `attention-matt/README.md` has the short version of all of this.
 
 ## Setup
 
@@ -52,4 +53,5 @@ python -m venv .venv
 .venv/bin/pip install numpy torch   # attention/ was built against numpy 2.5.4, torch 2.14.1+cpu
 ```
 
-Everything runs on CPU.
+`attention/` needs numpy and torch; `attention-matt/` needs `torch` alone (in its own
+`.venv`, Python 3.13.16, `torch 2.14.1+cpu`). Everything runs on CPU.

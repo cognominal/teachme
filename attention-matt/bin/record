@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Write the next learning record (learning-records/ is untracked, so this also
+# creates the directory when a fresh clone does not have one).
+#   ./bin/record "Masks click once you see the triangle"
+#   ./bin/record --list
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(dirname "$here")"
+exec "$root/.venv/bin/python" "$root/tools/record.py" "$@"

@@ -7,3 +7,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .DS_Store
+
+# Teaching notes about a person, not course material. Sparse checkouts and fresh
+# clones legitimately do not have this directory; ./bin/record creates it on demand.
+learning-records/
