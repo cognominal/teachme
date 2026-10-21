@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference — Glossary</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+
+<p class="kicker">Reference · shared vocabulary</p>
+<h1>Glossary</h1>
+<p class="subtitle">Every term this course uses, defined once. Lessons stick to these words.</p>
+
+<p>Terms marked <em>later</em> have been named but not yet taught — the lesson that teaches them is linked. Terms marked <em>ran into</em> appear in real code you will read before a lesson covers them.</p>
+
+<h2>Shape and storage</h2>
+
+<table>
+  <thead><tr><th>Term</th><th>Means</th></tr></thead>
+  <tbody>
+    <tr><td><strong>scalar</strong></td><td>one number.</td></tr>
+    <tr><td><strong>vector</strong></td><td>a fixed-length list of numbers. In this course, one token's features.</td></tr>
+    <tr><td><strong>matrix</strong></td><td>a list of vectors — a sequence of tokens. Written in code as an array of arrays.</td></tr>
+    <tr><td><strong>shape</strong></td><td>rows × columns, written <code>(T × d)</code>. For a batch, the leading axes count the batch: <code>(B × T × d)</code>.</td></tr>
+    <tr><td><strong>row / column</strong></td><td>A row of a token matrix is one token; a column is one feature across all tokens.</td></tr>
+    <tr><td><strong>element</strong> (entry)</td><td>one cell: <code>A[i][j]</code>.</td></tr>
+    <tr><td><strong>dimension</strong></td><td>The length of one axis. Because almost every error is an axis mix-up, PyTorch names axes in code (<code>dim=-1</code>) rather than describing them.</td></tr>
+    <tr><td><strong>axis / dim</strong></td><td>One direction of a tensor. <code>-1</code> is the last axis, <code>-2</code> the one before it. <em>Ran into</em> in lesson 00.</td></tr>
+    <tr><td><strong>tensor</strong></td><td>An n-dimensional array of numbers — <code>torch.Tensor</code> from lesson 01 on. A matrix is a 2-D tensor; a batch of sequences is a 3-D one. Same numbers as the nested lists in lesson 00, with the maths built in.</td></tr>
+    <tr><td><strong>dtype</strong></td><td>The number type inside a tensor. <code>float32</code> is what torch gives you by default and what a real model trains in; comparisons in this workspace's checks use a 1e-5 tolerance because float32 arithmetic lands within ~4e-8 of the same maths in <code>float64</code>.</td></tr>
+    <tr><td><strong>dim</strong> / <strong>axis argument</strong></td><td>Which axis an operation runs along. In attention, <code>dim=-1</code> on softmax means "along each row". <em>Ran into</em> in lesson 00, load-bearing in lesson 01.</td></tr>
+    <tr><td><strong>batch</strong></td><td>Several sequences processed at once, as an extra leading axis — the leading axes pass through matmul untouched. <em>Ran into</em> in lesson 00; proper treatment with heads later.</td></tr>
+  </tbody>
+</table>
+
+<h2>Operations</h2>
+
+<table>
+  <thead><tr><th>Term</th><th>Means</th></tr></thead>
+  <tbody>
+    <tr><td><strong>dot product</strong></td><td>Two equal-length vectors → one number: multiply pairwise, add. Measures similarity.</td></tr>
+    <tr><td><strong>matmul</strong> (matrix product)</td><td><code>(m × n) · (n × p) → (m × p)</code>; cell <code>(i, j)</code> is row <em>i</em> of the left operand dotted with column <em>j</em> of the right. Inner numbers must match; outer ones survive.</td></tr>
+    <tr><td><strong>transpose</strong></td><td>Swap rows and columns: <code>(m × n) → (n × m)</code>. In PyTorch <code>transpose(-2, -1)</code>; <code>.T</code> is only safe on 2-D tensors.</td></tr>
+    <tr><td><strong>element-wise product</strong></td><td><code>A * B</code> in PyTorch: matching cells multiply, nothing mixes. Never what attention wants.</td></tr>
+    <tr><td><strong>softmax</strong></td><td>Turns a list of numbers into a distribution: non-negative, summing to 1. Applied <em>per row</em> in attention.</td></tr>
+    <tr><td><strong>saturate</strong></td><td>What a softmax does when its inputs are large: nearly all the mass lands on one entry, so the result is almost one-hot and gradients vanish. The <code>1/√d<sub>k</sub></code> scale exists to prevent it.</td></tr>
+  </tbody>
+</table>
+
+<h2>The attention core</h2>
+
+<table>
+  <thead><tr><th>Term</th><th>Means</th></tr></thead>
+  <tbody>
+    <tr><td><strong>token</strong></td><td>One element of the sequence — roughly a word-piece. Rows of every token matrix.</td></tr>
+    <tr><td><strong>embedding</strong> / <strong>features</strong></td><td>The <code>d</code> numbers that represent a token. Everything attention computes is a new set of these.</td></tr>
+    <tr><td><strong>query</strong> (q)</td><td>What a token is looking for. A row of <code>Q</code>.</td></tr>
+    <tr><td><strong>key</strong> (k)</td><td>What a token offers for matching. A row of <code>K</code>.</td></tr>
+    <tr><td><strong>value</strong> (v)</td><td>What a token hands over once matched. A row of <code>V</code>.</td></tr>
+    <tr><td><strong>self-attention</strong></td><td>Q, K and V all projected from the same input rows, by three learned matrices <code>W<sup>Q</sup></code>, <code>W<sup>K</sup></code>, <code>W<sup>V</sup></code>.</td></tr>
+    <tr><td><strong>score</strong> (logit)</td><td>One cell of <code>Q · K<sup>T</sup></code>: an unnormalised similarity. Not a weight until softmax has run.</td></tr>
+    <tr><td><strong>attention weight</strong></td><td>One cell of the softmaxed score matrix: how much of that key's value the query takes. Each row sums to 1.</td></tr>
+    <tr><td><strong>weighted average</strong></td><td>Sum of values scaled by weights. Row <em>i</em> of attention's output is a weighted average of <em>all</em> of V's rows.</td></tr>
+    <tr><td><strong>scale</strong></td><td>Dividing scores by <code>√d<sub>k</sub></code> before softmax, to hold the spread near 1.</td></tr>
+    <tr><td><strong>d<sub>k</sub></strong> / <strong>d<sub>v</sub></strong></td><td>Width of a query/key vector; width of a value vector. They can differ; the output is <code>(T × d<sub>v</sub>)</code>.</td></tr>
+    <tr><td><strong>T</strong> (context length)</td><td>Number of tokens. <code>Q.length</code>, <code>scores.shape[-1]</code>.</td></tr>
+    <tr><td><strong>causal mask</strong></td><td>Making token <em>i</em> unable to see tokens after it: disallowed score cells are set to −∞ before softmax, which gives them weight exactly 0. <em>Later</em> (lesson 02).</td></tr>
+    <tr><td><strong>head</strong></td><td>One independent attention computed over a slice of the width; several run in parallel and are concatenated. <em>Later</em> (lesson 03).</td></tr>
+    <tr><td><strong>KV cache</strong></td><td>Keys and values remembered from earlier steps so generation does not recompute them. <em>Later</em>.</td></tr>
+  </tbody>
+</table>
+
+<h2>This workspace's own words</h2>
+
+<table>
+  <thead><tr><th>Term</th><th>Means</th></tr></thead>
+  <tbody>
+    <tr><td><strong>fluency strength</strong></td><td>Recalling something right now, while it is in view. Feels like mastery; is not durable.</td></tr>
+    <tr><td><strong>storage strength</strong></td><td>Being able to recall it next week, unprompted. What these lessons are built to produce — via recall from memory rather than re-reading.</td></tr>
+  </tbody>
+</table>
+
+<h2>Where these come from</h2>
+
+<ul>
+  <li><a href="https://arxiv.org/abs/1706.03762">Vaswani et al., <em>Attention Is All You Need</em> (2017)</a> — the source for query/key/value, <code>Q·K<sup>T</sup>/√d<sub>k</sub></code>, heads, and the mask.</li>
+  <li><a href="https://jalammar.github.io/illustrated-transformer/">Jay Alammar, <em>The Illustrated Transformer</em></a> — same vocabulary, diagram-first.</li>
+  <li><a href="https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html">PyTorch <code>scaled_dot_product_attention</code></a> — the production spelling of <code>mask</code>, <code>is_causal</code>, and the head dims.</li>
+</ul>
+
+<footer class="lesson-foot">
+  <p>Used by every lesson in this workspace. If a lesson uses a word that is not here, or contradicts a definition here, tell your agent — the glossary is the single source of truth for vocabulary.</p>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Open a lesson: through the local grader if it is running, else straight from disk.
+#   ./bin/lesson          lesson 0001
+#   ./bin/lesson 0000
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(dirname "$here")"
+id="${1:-0001}"
+port="${GRADER_PORT:-8757}"
+
+file="$(ls "$root/lessons/${id}"-*.html 2>/dev/null | head -1 || true)"
+if [[ -z "$file" ]]; then
+  echo "no lesson starting with ${id} in $root/lessons" >&2
+  exit 1
+fi
+
+if curl -sf "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+  url="http://127.0.0.1:${port}/lessons/$(basename "$file")"
+else
+  url="file://$file"
+  echo "(the grader is not running — './bin/grader' makes the lesson page able to check your code itself)" >&2
+fi
+
+echo "$url"
+xdg-open "$url" >/dev/null 2>&1 &

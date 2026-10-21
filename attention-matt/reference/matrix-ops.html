@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference — Matrix ops for attention</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+
+<p class="kicker">Reference · the maths floor</p>
+<h1>Matrix ops for attention</h1>
+<p class="subtitle">Three operations, one shape rule, the two products attention is built from, and the ways they break.</p>
+
+<h2>The convention here</h2>
+
+<p><strong>A matrix is an array of arrays; one row = one token.</strong> A shape is written <code>(rows × columns)</code>: <code>(T × d)</code> is T tokens with d numbers each. When you read a table of numbers, the <em>row</em> is the thing doing the asking and the <em>column</em> is the thing being asked about.</p>
+
+<pre><code>[[1.5, -0.2, 0.7],      # (T × d) = (2 × 3): two tokens, three features each
+ [0.1,  0.9, -0.4]]</code></pre>
+
+<h2>The three operations</h2>
+
+<table>
+  <thead><tr><th>Operation</th><th>Rule</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>dot product<br><code>dot(a, b)</code></td>
+      <td>two vectors of <em>equal length</em> → <strong>one number</strong><br><code>a₁b₁ + a₂b₂ + …</code></td>
+      <td>similarity: positive when the vectors point the same way, negative when opposed. Attention's notion of "relevant" <em>is</em> this number.</td>
+    </tr>
+    <tr>
+      <td>matmul<br><code>matmul(A, B)</code></td>
+      <td><code>(m × n) · (n × p) → (m × p)</code><br>cell <code>(i, j)</code> = row <em>i</em> of A dotted with column <em>j</em> of B</td>
+      <td>applies B to every row of A: rows in, rows out, row count unchanged.</td>
+    </tr>
+    <tr>
+      <td>transpose<br><code>transpose(A)</code></td>
+      <td><code>(m × n) → (n × m)</code><br><code>A[i][j]</code> lands at <code>[j][i]</code></td>
+      <td>swaps which axis is rows and which is columns, so the inner numbers of a product can be made to match.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>The one rule</h2>
+
+<div class="formula">(m × n) · (n × p) → (m × p)</div>
+
+<p><strong>Inner numbers must match; outer numbers survive.</strong> The two inner counts must be equal because they are the length of the vectors being dotted — a violation is not a wrong answer, it is a product that does not exist. The two outer counts are what the answer is shaped like; the inner ones disappear into it.</p>
+
+<pre><code>A = [[1, 2, 3],          B = [[1, 0],          A · B = [[4,  5],
+     [4, 5, 6]]               [0, 1],                   [10, 11]]
+                              [1, 1]]
+# (2 × 3) · (3 × 2) -> (2 × 2)
+# cell (0,0) = row 0 of A · column 0 of B = [1,2,3] · [1,0,1] = 4</code></pre>
+
+<h2>Why attention transposes K</h2>
+
+<p>Every key is a <em>row</em> of <code>K</code>. A single token's query is a <em>row</em> of <code>Q</code>. Matmul pairs rows of the left operand with <strong>columns</strong> of the right one, so to let one query reach every key in one product, the keys must be turned into columns:</p>
+
+<div class="formula">Q · K<sup>T</sup> = (T × d<sub>k</sub>) · (d<sub>k</sub> × T) → (T × T)<br>weights · V = (T × T) · (T × d<sub>v</sub>) → (T × d<sub>v</sub>)</div>
+
+<table>
+  <thead><tr><th>Product</th><th>Shape</th><th>What entry <code>(i, j)</code> means</th></tr></thead>
+  <tbody>
+    <tr><td><code>Q · K<sup>T</sup></code> — scores</td><td>(T × T)</td><td>how much token <em>i</em>'s query likes token <em>j</em>'s key</td></tr>
+    <tr><td><code>weights · V</code> — output</td><td>(T × d<sub>v</sub>)</td><td>token <em>i</em>'s new row: a weighted average of all of V's rows</td></tr>
+  </tbody>
+</table>
+
+<h2>Same thing, two languages</h2>
+
+<table>
+  <thead><tr><th>Operation</th><th>This workspace (JS, <code>assets/tensor.js</code>)</th><th>PyTorch</th></tr></thead>
+  <tbody>
+    <tr><td>dot product</td><td><code>dot(a, b)</code></td><td><code>a @ b</code> or <code>torch.dot(a, b)</code></td></tr>
+    <tr><td>matmul</td><td><code>matmul(A, B)</code></td><td><code>A @ B</code></td></tr>
+    <tr><td>transpose</td><td><code>transpose(A)</code></td><td><code>A.transpose(-2, -1)</code> — <strong>not</strong> <code>A.T</code> once batching exists</td></tr>
+    <tr><td>shape</td><td><code>[A.length, A[0].length]</code></td><td><code>A.shape</code> → <code>torch.Size([m, n])</code>; index it: <code>A.shape[0]</code>, <code>A.shape[-1]</code></td></tr>
+    <tr><td>rows of A</td><td><code>A[i]</code></td><td><code>A[i]</code> (same), but <code>A[:, i]</code> is a column</td></tr>
+    <tr><td>element-wise</td><td><code>A[i][j] * B[i][j]</code></td><td><code>A * B</code> — <strong>not</strong> matmul; no mixing happens</td></tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <span class="label">The <code>.T</code> trap</span>
+  <p><code>A.T</code> is right for a plain 2-D matrix. On a tensor with batch or head axes it reverses <em>all</em> axes — <code>randn(2, 3, 4).T</code> has shape <code>(4, 3, 2)</code>, not <code>(2, 4, 3)</code> — and current PyTorch raises a deprecation warning telling you to use <code>A.mT</code> or <code>transpose(-2, -1)</code> instead. Attention code always writes <code>transpose(-2, -1)</code>.</p>
+</div>
+
+<h2>Four ways it goes wrong</h2>
+
+<table>
+  <thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr><td><code>mat1 and mat2 shapes cannot be multiplied (2x3 and 2x3)</code> — or a grid of <code>NaN</code>s in JS</td><td>inner numbers differ</td><td>transpose the operand that should be columns, or check the axes are in the order you think</td></tr>
+    <tr><td>A product exists but the meaning is backwards</td><td>operands swapped: <code>B · A</code> for <code>A · B</code></td><td>matmul does not commute — put the asking side (queries) on the left</td></tr>
+    <tr><td>Same shape in and out, numbers unchanged, nothing ever mixes</td><td>element-wise multiply used where matmul was meant</td><td>at least one output cell must combine <em>all</em> inner terms, not just the matching one</td></tr>
+    <tr><td>A (T × T) output where (T × d<sub>v</sub>) was expected</td><td>stopped after the scores; never multiplied by V</td><td>the weights are intermediate — the output is <code>weights · V</code></td></tr>
+  </tbody>
+</table>
+
+<h2>Sanity checks you can do by hand</h2>
+
+<ul>
+  <li><strong>Inner-match test:</strong> write the two shapes down, cancel the two inner numbers, and if what is left is the shape you got, you are right. <code>(6 × 8) · (8 × 3) → (6 × 3)</code>.</li>
+  <li><strong>Identity:</strong> <code>A · I = A</code> for a square A, where I has 1s on the diagonal and 0s elsewhere.</li>
+  <li><strong>Double transpose:</strong> <code>(A<sup>T</sup>)<sup>T</sup> = A</code>, exactly.</li>
+  <li><strong>Non-commutativity:</strong> <code>A · B</code> and <code>B · A</code> generally have different shapes <em>and</em> different entries; sometimes only one of the two exists.</li>
+  <li><strong>Rebracketing is safe:</strong> <code>(A · B) · C = A · (B · C)</code> — which is why attention can be chained at all.</li>
+  <li><strong>Batch axes pass through:</strong> <code>(2, 4, 8) @ (2, 8, 4) → (2, 4, 4)</code>; the rule above still only looks at the last two axes.</li>
+</ul>
+
+<h2>Where this came from</h2>
+
+<ul>
+  <li><a href="https://www.3blue1brown.com/lessons/matrix-multiplication/">3Blue1Brown, <em>Essence of Linear Algebra</em> ch. 4 — matrix multiplication as composition</a>: why the rule is rows-against-columns at all. Text adaptation on the page. Draws vectors as columns; transpose in your head.</li>
+  <li><a href="https://d2l.ai/chapter_preliminaries/linear-algebra.html">Dive into Deep Learning §2.3 — Linear Algebra</a>: the same operations in textbook + PyTorch form, including batched matmul.</li>
+  <li><a href="https://docs.pytorch.org/docs/stable/generated/torch.matmul.html">PyTorch docs — <code>torch.matmul</code></a>: the exact broadcasting rules for the leading axes.</li>
+</ul>
+
+<footer class="lesson-foot">
+  <p>Used by <a href="../lessons/0000-matrices-for-attention.html">Lesson 00 — Matrices</a> and every lesson after it. Ask your agent about anything on this sheet that has gone stale or unclear.</p>
+</footer>
+
+</body>
+</html>

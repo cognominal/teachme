@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 01 — Attention is a weighted average (PyTorch)</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 01 · <a href="../MISSION.md">mission</a>: write attention from scratch and make it work</p>
+<h1>Attention is a weighted average</h1>
+<p class="subtitle">Four steps, five lines of PyTorch, one heatmap your own torch code produces.</p>
+
+<p class="lead">From here on, the code is real PyTorch. You write two functions in <code>exercises/0001_attention.py</code>, run <code>./bin/grade 0001</code>, and the checks compare your numbers against an independent implementation on random tensors. This page explains the four steps, gives you the Python you need, and then draws <em>your</em> output.</p>
+
+<p class="prereq">Prerequisites: <a href="0000-matrices-for-attention.html">Lesson 00</a> — one row per token, and <em>inner numbers must match</em> for a product to exist. Every shape below comes from there. New to Python? §2 is the whole syntax this lesson uses.</p>
+
+<div class="note">
+  <span class="label">The one idea</span>
+  <p>A Python dict returns <em>one</em> value for a key. Attention is a lookup that returns a <strong>blend</strong> of every value in the table, weighted by how well the query matches each key. That's it. Everything else is bookkeeping about those weights.</p>
+</div>
+
+<h2>1 · Three roles, one input</h2>
+
+<p>Every token in the sequence plays three parts, via three separate vectors:</p>
+
+<table>
+  <thead><tr><th>Vector</th><th>Role</th><th>Plain-English test</th></tr></thead>
+  <tbody>
+    <tr><td><code>query</code> (q)</td><td>what this token is looking for</td><td>"I am the word <em>it</em> — I need a noun."</td></tr>
+    <tr><td><code>key</code> (k)</td><td>what this token offers for matching</td><td>"I am the word <em>trophy</em> — I am a noun."</td></tr>
+    <tr><td><code>value</code> (v)</td><td>what this token hands over once matched</td><td>"Here is what I contribute to the mix."</td></tr>
+  </tbody>
+</table>
+
+<p>In <em>self</em>-attention all three come from the same input rows, multiplied by three learned matrices <code>W<sup>Q</sup></code>, <code>W<sup>K</sup></code>, <code>W<sup>V</sup></code>. This lesson takes <code>Q</code>, <code>K</code> and <code>V</code> as given, so the mechanism is all that is left to see.<span class="sidenote">Roy, Vosoughi &amp; Shazeer call this a "fuzzy" lookup; the softness is the point — nothing is ever exactly matched or exactly ignored.</span></p>
+
+<h2>2 · The Python you need (all of it)</h2>
+
+<p>Six constructs, and the transposition of the habits you already have. Nothing here is subtle — but tensor code is where a JS/Perl/C developer's reflexes go wrong, so read this once with attention.</p>
+
+<pre><code>import math
+import torch
+
+def attention_weights(Q, K):                # <span class="cmt">def name(args): — the colon opens a block</span>
+    dk = Q.shape[-1]                         # <span class="cmt">.shape is a tuple; [-1] is the last axis — so dk here</span>
+    scores = Q @ K.transpose(-2, -1)          # <span class="cmt">@ is matmul (not element-wise); transpose(-2,-1) swaps the last two axes</span>
+    scores = scores / dk ** 0.5               # <span class="cmt">** is power, as in JS; no Math. prefix</span>
+    return torch.softmax(scores, dim=-1)      # <span class="cmt">dim=-1 = along the last axis = each row</span></code></pre>
+
+<table>
+  <thead><tr><th>Your reflex</th><th>Python</th><th>Why it bites in tensor code</th></tr></thead>
+  <tbody>
+    <tr><td><code>{ … }</code> blocks</td><td>indentation after a <code>:</code></td><td>the file will not even compile if a body is not indented — and the error names the line, so it is easy to fix</td></tr>
+    <tr><td><code>x.length</code></td><td><code>len(x)</code>; for tensors <code>x.shape[0]</code></td><td><code>.shape</code> is a tuple of axis lengths, indexable, and negative indices count from the end</td></tr>
+    <tr><td><code>for (i=0; i&lt;n; i++)</code></td><td><code>for i in range(n):</code></td><td>no <code>i++</code>; and tensors usually need no loop at all — that is the point of using them</td></tr>
+    <tr><td><code>a * b</code></td><td><code>a * b</code> is element-wise, <code>a @ b</code> is matmul</td><td>using <code>*</code> where you meant <code>@</code> produces a plausible-looking shape that never mixes rows</td></tr>
+    <tr><td><code>null</code></td><td><code>None</code></td><td>and "empty" is a loaded word: check <code>.numel()</code>, not truthiness</td></tr>
+    <tr><td><code>Math.sqrt</code>, <code>Math.pow</code></td><td><code>math.sqrt</code> or <code>** 0.5</code></td><td>integer division <code>//</code> exists too — never use it on scores</td></tr>
+  </tbody>
+</table>
+
+<p>Four error messages you are likely to meet, with their real text from this workspace's torch:</p>
+
+<table>
+  <thead><tr><th>Message</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>IndentationError: expected an indented block after function definition on line 1</code></td><td>a <code>def</code> with nothing indented under it</td></tr>
+    <tr><td><code>RuntimeError: mat1 and mat2 shapes cannot be multiplied (2x3 and 4x5)</code></td><td>inner numbers differ — exactly the rule from <a href="0000-matrices-for-attention.html">lesson 00</a></td></tr>
+    <tr><td><code>TypeError: unsupported operand type(s) for @: 'Tensor' and 'int'</code></td><td><code>@</code> on something that is not a tensor, usually a number</td></tr>
+    <tr><td>a <em>list</em> where a tensor was expected</td><td>initially <code>scores = []</code> is a list, not an empty (T × T) tensor — build the tensor with tensor operations, not by appending</td></tr>
+  </tbody>
+</table>
+
+<p>More of this, compressed, on the sheet: <a href="../reference/python-for-js-devs.html">Python for JS/Perl/C developers</a>.</p>
+
+<h2>3 · The four steps</h2>
+
+<div class="formula">weights = softmax<sub>rows</sub>( Q · K<sup>T</sup> / √d<sub>k</sub> )<br>
+output = weights · V</div>
+
+<ol>
+  <li><strong>Score.</strong> <code>Q @ K.transpose(-2, -1)</code> dots every query with every key. Entry <em>(i, j)</em> is "how much does token <em>i</em>'s query like token <em>j</em>'s key". The result is <strong>T × T</strong>: one row per token asking, one column per token answering.</li>
+  <li><strong>Scale.</strong> Divide by <code>√d<sub>k</sub></code> — the square root of a query's width, <code>Q.shape[-1]</code>.</li>
+  <li><strong>Normalise.</strong> <code>torch.softmax(scores, dim=-1)</code> — along each row, so each row becomes a probability distribution: non-negative, sums to 1.</li>
+  <li><strong>Mix.</strong> <code>weights @ V</code>. Row <em>i</em> of the output is the weighted average of all value rows, as chosen by query <em>i</em>.</li>
+</ol>
+
+<table>
+  <thead><tr><th>Step</th><th>PyTorch</th><th>Shape (<em>T</em> tokens, <em>d<sub>k</sub></em> key width, <em>d<sub>v</sub></em> value width)</th></tr></thead>
+  <tbody>
+    <tr><td>inputs</td><td><code>Q</code>, <code>K</code>, <code>V</code></td><td>(T, d<sub>k</sub>), (T, d<sub>k</sub>), (T, d<sub>v</sub>)</td></tr>
+    <tr><td>transpose</td><td><code>K.transpose(-2, -1)</code></td><td>(d<sub>k</sub>, T)</td></tr>
+    <tr><td>scores</td><td><code>Q @ K.transpose(-2, -1)</code></td><td>(T, T)</td></tr>
+    <tr><td>weights</td><td><code>torch.softmax(scores / dk ** 0.5, dim=-1)</code></td><td>(T, T)</td></tr>
+    <tr><td>output</td><td><code>weights @ V</code></td><td>(T, d<sub>v</sub>)</td></tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <span class="label">Why the √d<sub>k</sub> exists</span>
+  <p>Dot products of <em>d</em> independent terms grow with <em>d</em>: the spread of a raw score is about <code>√d<sub>k</sub></code>. With <code>d<sub>k</sub> = 64</code> typical scores land near ±8 either side of zero, and <code>softmax([8, 0, −8])</code> is <code>[0.9997, 0.0003, 0.0000]</code>. The layer has stopped being a blend and become an argmax — and a saturated softmax hands almost no gradient to the vectors responsible. Dividing by <code>√d<sub>k</sub></code> pulls the spread back to roughly 1, keeping the distribution soft and the gradients alive.<span class="sidenote">Vaswani et al., §3.2.1: "We suspect that for large values of d<sub>k</sub>, the dot products grow large in magnitude, pushing the softmax function into regions where it has extremely small gradients."</span></p>
+</div>
+
+<p>Notation, if it helps: <code>softmax<sub>rows</sub></code> means "apply softmax to each row independently" — in PyTorch that is <code>dim=-1</code>. Nothing in this lesson is bigger than a dot product.</p>
+
+<h2>4 · Write it</h2>
+
+<p>Two functions, in a file, in your editor. Save, then run the checks — either in the terminal with <code>./bin/grade 0001</code>, or with the button below, which asks the local grader for the verdicts on whatever is in the file right now.</p>
+
+<div id="exercise"></div>
+
+<h2>5 · Watch it work</h2>
+
+<p>Here is a hand-built example — 4 tokens ("the trophy fit it"), query width 2, value width 3. The rows of <code>Q</code> and <code>K</code> were picked by hand so the mechanism is visible; in a trained model those are the learned projections instead. Run your code and the numbers below become <em>yours</em>.</p>
+
+<div class="controls">
+  <button class="btn btn--primary" id="recompute">Re-check and redraw</button>
+</div>
+<div id="watch"></div>
+
+<p>Read the grid this way: the <strong>row</strong> is the token doing the looking, the <strong>column</strong> is the token being looked at. Row <code>it</code> leans hardest on <code>trophy</code> — but only to about a third. That softness is not sloppiness; it is why gradients can flow to every position and why the layer can carry several interpretations at once.</p>
+
+<h2>6 · The same thing in production</h2>
+
+<p>Production code does not write those five lines. It calls the fused kernel, which does the same maths with a better memory layout:</p>
+
+<pre><code>import torch.nn.functional as F
+
+out = F.scaled_dot_product_attention(Q, K, V)   # <span class="cmt">is_causal=False by default: every token sees every token</span></code></pre>
+
+<p>"Same maths" is checked, not asserted: in this workspace, on float64 inputs, your five lines and this one call agree to within 2.2 × 10<sup>−16</sup>. What the kernel adds is memory behaviour and a place to put masks and head axes without allocating (T × T) per head — the two things lessons 02 and 03 are about. The docs list the exact hand-written equivalent: <a href="https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html">PyTorch — <code>scaled_dot_product_attention</code></a>.</p>
+
+<h2>7 · Check what stuck</h2>
+
+<p>Answer from memory. Every option is the same length on purpose — no formatting hints.</p>
+
+<div id="quiz"></div>
+
+<div class="note">
+  <span class="label">Do this before you close the tab</span>
+  <p>Say the four steps out loud once: <em>score, scale, softmax, mix</em>. Then, tomorrow, without opening this page: delete both function bodies in <code>exercises/0001_attention.py</code> and write them again from memory, then run <code>./bin/grade 0001</code>. Retrieval you had to work for is what survives; re-reading is not.</p>
+</div>
+
+<div class="source">
+  <span class="label">Primary source · read this next (10 min)</span>
+  <p><a href="https://arxiv.org/abs/1706.03762">Vaswani et al., <em>Attention Is All You Need</em> (2017)</a> — read <strong>§3.2.1 "Scaled Dot-Product Attention"</strong> and look at Figure 2. It is two pages longer than this page and it is the thing everything else is a paraphrase of. Footnote 4 on that page is the origin of the note above.</p>
+  <p>Then, because you now read real code: <a href="https://nlp.seas.harvard.edu/annotated-transformer/">The Annotated Transformer (Harvard NLP)</a> — the paper's text interleaved with working PyTorch, line by line. Read its <code>attention()</code> function and note how close it is to yours. If you want the same mechanism drawn instead: <a href="https://www.3blue1brown.com/lessons/attention/">3Blue1Brown, <em>Attention in transformers, step-by-step</em></a> (26 min, full transcript on the page) — it lays tokens out in <strong>columns</strong> and softmaxes <em>down</em> them, so its grid is your <code>Q @ K.T</code> flipped diagonally. Identical maths, transposed picture.</p>
+</div>
+
+<div class="source">
+  <span class="label">Keep for later</span>
+  <p><a href="../reference/scaled-dot-product-attention.html">Reference sheet: scaled dot-product attention</a> — shapes, the formula, the Python/JS mapping, four failure modes, hand-checkable sanity tests.</p>
+  <p><a href="../reference/python-for-js-devs.html">Reference sheet: Python for JS/Perl/C developers</a> — the syntax map, the tensor idioms, the four errors you will actually hit.</p>
+  <p><a href="../reference/glossary.html">Glossary</a> — every term this course uses, defined once.</p>
+  <p><a href="https://github.com/karpathy/nanoGPT">karpathy/nanoGPT</a>, <code>model.py</code> — the whole GPT in ~300 lines; this lesson's attention is about 20 of them. Keep it for lesson 03, once masking and multi-head are in place.</p>
+</div>
+
+<footer class="lesson-foot">
+  <p><strong>Ask your teacher.</strong> I'm your agent in this workspace — ask me anything this page glossed over: why <code>softmax</code> and not something else, how the three projections are learned, what changes for a batch of 32 sequences, where the causal mask goes (that's lesson 02), how to read the traceback when your code raises, or to check your mental model of shapes.</p>
+  <p>Next lesson: the mask and the scale — what changes when a token must not look ahead.</p>
+</footer>
+
+<script src="../assets/matrix-view.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/pyexercise.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  /* The reference numbers for §5, computed in this workspace with torch 2.14.1
+     (float32) — the same tensors the learner's file uses. They are only ever
+     drawn when the learner's own code cannot produce numbers yet. */
+  var REFERENCE = {
+    weights: [
+      [0.2953, 0.1987, 0.2423, 0.2637],
+      [0.2109, 0.3134, 0.2571, 0.2185],
+      [0.2402, 0.2689, 0.2541, 0.2368],
+      [0.1938, 0.3412, 0.2571, 0.2080]
+    ],
+    output: [
+      [0.2810, 0.2674, 0.2847],
+      [0.3782, 0.2818, 0.2551],
+      [0.3403, 0.2776, 0.2677],
+      [0.4021, 0.2835, 0.2470]
+    ]
+  };
+
+  var watch = document.getElementById("watch");
+
+  function pick(figure, fallback) {
+    if (figure && figure.source === "learner" && figure.values) {
+      return { values: figure.values, source: "your code", error: null };
+    }
+    return {
+      values: fallback,
+      source: "the reference values stored on this page",
+      error: figure && figure.error ? figure.error : null
+    };
+  }
+
+  function mixLine(row, tokens) {
+    return row.map(function (w, j) { return { w: w, s: tokens[j] + " " + w.toFixed(2) }; })
+      .sort(function (a, b) { return b.w - a.w; })
+      .map(function (p) { return p.s; })
+      .join("  ·  ");
+  }
+
+  function draw(figures) {
+    var tokens = (figures && figures.tokens) || ["the", "trophy", "fit", "it"];
+    var dk = (figures && figures.dk) || 2;
+    var weights = pick(figures && figures.weights, REFERENCE.weights);
+    var output = pick(figures && figures.output, REFERENCE.output);
+
+    var html = "";
+    html += '<figure><figcaption>Attention weights (dk = ' + dk + ') — ' +
+      (weights.source === "your code"
+        ? "computed by <strong>your</strong> <code>attention_weights()</code>"
+        : "the <strong>reference</strong> values, because your code cannot produce numbers yet") +
+      ". Each row sums to 1.</figcaption>";
+    html += MatrixView.heatmap(weights.values, {
+      rowLabels: tokens,
+      colLabels: tokens,
+      digits: 2,
+      intensityMax: 1,
+      corner: "Q @ K.T"
+    });
+    html += "</figure>";
+
+    if (weights.error) {
+      html += '<div class="console-out">your attention_weights() raised: ' + MatrixView.escapeHtml(weights.error) + "</div>";
+    }
+
+    html += "<h3>What each token ends up carrying</h3>";
+    html += "<table><thead><tr><th>token</th><th>pulls most from</th><th>output vector (dv = " +
+      (output.values[0] ? output.values[0].length : 3) + ")</th></tr></thead><tbody>";
+    tokens.forEach(function (token, i) {
+      html += "<tr><td><code>" + token + "</code></td><td>" + mixLine(weights.values[i], tokens) +
+        "</td><td><code>[ " + output.values[i].map(function (x) { return x.toFixed(2); }).join(", ") + " ]</code></td></tr>";
+    });
+    html += "</tbody></table>";
+    html += '<p class="helpers">The weights above: ' + (weights.source === "your code" ? "your code" : weights.source) +
+      ". The output vectors: " + (output.source === "your code" ? "your code" : output.source) +
+      ". Row <code>it</code> is the story: about a third of its output is the <code>trophy</code> value, the rest is a blend. " +
+      "The layer did not choose one token — it weighted them all.</p>";
+
+    watch.innerHTML = html;
+  }
+
+  var runner = PyExercise.mount(document.getElementById("exercise"), {
+    lesson: "0001",
+    file: "exercises/0001_attention.py",
+    page: "lessons/0001-attention-as-a-weighted-average.html",
+    heading: "Your implementation",
+    intro: "<p>The file already has the two signatures, the step list in comments, and an example block that prints your numbers " +
+           "in the terminal: <code>./.venv/bin/python exercises/0001_attention.py</code></p>",
+    onResult: function (report) { draw(report.figures); }
+  });
+
+  document.getElementById("recompute").addEventListener("click", function () { runner.grade(); });
+  draw(null);
+
+  /* ---------- retrieval practice ---------- */
+  Quiz.mount(document.getElementById("quiz"), {
+    title: "Retrieval practice",
+    items: [
+      {
+        q: "In <code>torch.softmax(scores, dim=-1)</code>, what does <code>dim=-1</code> do?",
+        options: [
+          { text: "Each row becomes a distribution over keys", correct: true },
+          { text: "Each column becomes a distribution over keys" },
+          { text: "Each tensor becomes a single probability pair" },
+          { text: "Each step divides the scores by the key width" }
+        ],
+        explain: "<code>-1</code> is the last axis, and here the last axis runs across the keys — so every row is normalised on its own. Getting it wrong is the single most common attention bug: you get columns summing to 1 and rows that do not."
+      },
+      {
+        q: "Why divide the scores by √d<sub>k</sub> before the softmax?",
+        options: [
+          { text: "To keep the softmax gradients from vanishing", correct: true },
+          { text: "To make all the weights perfectly uniform" },
+          { text: "To shrink the length of every key vector" },
+          { text: "To centre each query's raw dot products" }
+        ],
+        explain: "Raw scores spread out proportional to √d<sub>k</sub>. Large scores saturate the softmax into a one-hot vector, where its gradient is near zero and learning stalls. The scale keeps the spread ≈ 1 (Vaswani et al., §3.2.1)."
+      },
+      {
+        q: "<code>scores = Q @ K.transpose(-2, -1)</code> is a (T, T) tensor. What does one cell hold?",
+        options: [
+          { text: "The similarity of one query and key", correct: true },
+          { text: "The attention weight of one query and key" },
+          { text: "The mixture of one query and one value" },
+          { text: "The sum of one query and one key vector" }
+        ],
+        explain: "An unnormalised score: the dot product of one query row with one key row. A <em>weight</em> only exists once the whole row has been through softmax — that is what forces the row to sum to 1."
+      },
+      {
+        q: "In self-attention, Q, K and V start life as three of what?",
+        options: [
+          { text: "Three learned views of every input row", correct: true },
+          { text: "Three separate copies of every input row" },
+          { text: "Three random matrices of every input row" },
+          { text: "Three lookup tables keyed by the tokens" }
+        ],
+        explain: "Each input row is multiplied by a learned matrix: <code>W_q</code>, <code>W_k</code>, <code>W_v</code>. Same source row, three different projections — that is why it is called <em>self</em>-attention."
+      },
+      {
+        q: "From memory: which PyTorch call turns scores into weights, and which argument makes it work along each row?",
+        type: "recall",
+        placeholder: "the call and the argument",
+        accept: [
+          /softmax[\s\S]{0,40}(dim\s*=\s*-1|-1)/i,
+          /(dim\s*=\s*-1|-1)[\s\S]{0,40}softmax/i,
+          /softmax[\s\S]{0,40}(last|final)\s+axis/i
+        ],
+        explain: "<code>torch.softmax(scores, dim=-1)</code>. <code>-1</code> is the last axis, which for a (T, T) score tensor is the keys — so each row becomes a distribution. If you had to think hard, that is a good sign; come back to this question tomorrow."
+      }
+    ]
+  });
+})();
+</script>
+</body>
+</html>

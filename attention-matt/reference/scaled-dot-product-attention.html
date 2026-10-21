@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference — Scaled dot-product attention</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+
+<p class="kicker">Reference · attention core</p>
+<h1>Scaled dot-product attention</h1>
+<p class="subtitle">One page: the four steps, the shapes, the two languages, the four ways it goes wrong.</p>
+
+<h2>The four steps</h2>
+
+<div class="formula">scores&nbsp; = Q · K<sup>T</sup><br>
+weights = softmax<sub>rows</sub>( scores / √d<sub>k</sub> )<br>
+output&nbsp; = weights · V</div>
+
+<table>
+  <thead><tr><th>#</th><th>Step</th><th>Shape</th><th>Why it is there</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><code>Q · K<sup>T</sup></code></td><td>(T×d<sub>k</sub>)·(d<sub>k</sub>×T) → <strong>T×T</strong></td><td>dot product = similarity between one query and one key</td></tr>
+    <tr><td>2</td><td><code>/ √d<sub>k</sub></code></td><td>T×T</td><td>raw score spread grows as √d<sub>k</sub>; without it softmax saturates and gradients die</td></tr>
+    <tr><td>3</td><td><code>softmax<sub>rows</sub></code></td><td>T×T</td><td>each row becomes a distribution: non-negative, sums to 1</td></tr>
+    <tr><td>4</td><td><code>· V</code></td><td>(T×T)·(T×d<sub>v</sub>) → <strong>T×d<sub>v</sub></strong></td><td>output row <em>i</em> = weighted average of all rows of V</td></tr>
+  </tbody>
+</table>
+
+<h2>Notation</h2>
+
+<table>
+  <thead><tr><th>Symbol</th><th>Means</th><th>In code</th></tr></thead>
+  <tbody>
+    <tr><td><em>T</em></td><td>number of tokens (sequence length)</td><td><code>Q.length</code></td></tr>
+    <tr><td><em>d<sub>k</sub></em></td><td>width of one query/key vector</td><td><code>K[0].length</code>, <code>K.shape[-1]</code></td></tr>
+    <tr><td><em>d<sub>v</sub></em></td><td>width of one value vector (may differ from d<sub>k</sub>)</td><td><code>V[0].length</code></td></tr>
+    <tr><td><code>q</code>, <code>k</code>, <code>v</code></td><td>the three roles: looking for · on offer · handed over</td><td>rows of Q, K, V</td></tr>
+    <tr><td><code>head</code></td><td>one independent attention over a slice of the width</td><td>extra batch dimension</td></tr>
+    <tr><td><em>self</em>-attention</td><td>Q, K, V all projected from the same input rows</td><td><code>W_q @ x</code>, <code>W_k @ x</code>, <code>W_v @ x</code></td></tr>
+  </tbody>
+</table>
+
+<h2>Same thing, two languages</h2>
+
+<p>Python + PyTorch is the substrate of this course from lesson 01 on; the JS column is how lessons 00–01 first made the shapes visible.</p>
+
+<table>
+  <thead><tr><th>Step</th><th>PyTorch</th><th>JS arrays (lesson 00)</th></tr></thead>
+  <tbody>
+    <tr><td>matmul</td><td><code>A @ B</code></td><td><code>matmul(A, B)</code></td></tr>
+    <tr><td>transpose</td><td><code>K.transpose(-2, -1)</code> (<code>.T</code> only for 2-D)</td><td><code>transpose(K)</code></td></tr>
+    <tr><td>scale</td><td><code>scores / dk ** 0.5</code></td><td><code>scale(scores, 1 / Math.sqrt(dk))</code></td></tr>
+    <tr><td>row softmax</td><td><code>torch.softmax(scores, dim=-1)</code></td><td><code>softmaxRows(scores)</code></td></tr>
+    <tr><td>width of a query</td><td><code>Q.shape[-1]</code></td><td><code>K[0].length</code></td></tr>
+    <tr><td>the whole thing</td><td><code>F.scaled_dot_product_attention(Q, K, V)</code></td><td><code>matmul(softmaxRows(scale(matmul(Q, transpose(K)), 1/Math.sqrt(K[0].length))), V)</code></td></tr>
+  </tbody>
+</table>
+
+<pre><code># PyTorch, written out, batched over leading dims (batch, heads)
+def attention(Q, K, V):                       # (..., T, dk), (..., T, dk), (..., T, dv)
+    dk = Q.shape[-1]
+    scores = Q @ K.transpose(-2, -1) / dk ** 0.5
+    return torch.softmax(scores, dim=-1) @ V  # (..., T, dv)</code></pre>
+
+<h2>Four ways it goes wrong</h2>
+
+<table>
+  <thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr><td>Weights are near one-hot; a big softmax saturates; learning stalls</td><td>missing the <code>1/√d<sub>k</sub></code> scale</td><td>divide scores before softmax</td></tr>
+    <tr><td>Error "inner dimensions must match" on <code>Q · K</code></td><td>forgot to transpose K</td><td><code>Q @ K.transpose(-2, -1)</code></td></tr>
+    <tr><td>Rows don't sum to 1, but columns nearly do</td><td>softmax over the wrong axis</td><td><code>dim=-1</code> (rows), <code>softmaxRows</code></td></tr>
+    <tr><td>Output shape is (T×T) instead of (T×d<sub>v</sub>)</td><td>returned the weights, never multiplied by V</td><td><code>weights @ V</code></td></tr>
+    <tr><td>Token 3 influences token 1</td><td>no causal mask (decoder)</td><td>lesson 02</td></tr>
+  </tbody>
+</table>
+
+<h2>Sanity checks you can do by hand</h2>
+
+<ul>
+  <li><strong>One token:</strong> with T = 1 the only weight is 1, so the output equals the single value row. Any correct implementation reproduces this.</li>
+  <li><strong>Identical rows:</strong> if every key row is the same, every weight in a row is <code>1/T</code> — a plain average.</li>
+  <li><strong>Sharpness:</strong> multiply the scaled scores by a constant <em>c</em> and the distribution sharpens as <em>c</em> grows; the scale <code>1/√d<sub>k</sub></code> exists to keep <em>c</em> ≈ 1.</li>
+  <li><strong>Convexity:</strong> every output cell must lie between the smallest and largest value in that column of V. A weighted average can never leave the range of what it averages.</li>
+</ul>
+
+<h2>Where this came from</h2>
+
+<ul>
+  <li><a href="https://arxiv.org/abs/1706.03762">Vaswani et al., <em>Attention Is All You Need</em>, §3.2.1 and Figure 2</a> — the definition everything else paraphrases. Footnote 4 on that page is the scaling argument.</li>
+  <li><a href="https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html">PyTorch <code>scaled_dot_product_attention</code></a> — the fused production kernel; same maths, better memory behaviour.</li>
+</ul>
+
+<footer class="lesson-foot">
+  <p>Used by <a href="../lessons/0000-matrices-for-attention.html">Lesson 00 — Matrices</a> and <a href="../lessons/0001-attention-as-a-weighted-average.html">Lesson 01 — Attention is a weighted average</a> (Python + PyTorch from lesson 01 on; the JS crib is <a href="python-for-js-devs.html">Python for JS/Perl/C developers</a>). Ask your agent about anything on this sheet that has gone stale or unclear.</p>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Grade this workspace's Python exercises in the terminal.
+#   ./bin/grade              grade lesson 0001
+#   ./bin/grade 0001 --json  raw report
+#   ./bin/grade --show-solution
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(dirname "$here")"
+exec "$root/.venv/bin/python" "$root/tools/grader/cli.py" "$@"

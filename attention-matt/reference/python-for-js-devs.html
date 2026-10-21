@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference — Python for JS/Perl/C developers</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+
+<p class="kicker">Reference · the code substrate</p>
+<h1>Python for JS/Perl/C developers</h1>
+<p class="subtitle">The subset this course needs, the tensor idioms every attention implementation uses, and the errors you will actually hit.</p>
+
+<h2>Blocks, functions, values</h2>
+
+<table>
+  <thead><tr><th>Your reflex</th><th>Python</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td><code>{ … }</code> after a condition or function head</td><td><code>:</code> then indentation (4 spaces, consistently)</td><td>Indentation <em>is</em> the block structure. A missing body will not compile at all.</td></tr>
+    <tr><td><code>function f(a, b) { … }</code></td><td><code>def f(a, b=1.0):</code> … <code>return x</code></td><td>A function with no <code>return</code> returns <code>None</code>.</td></tr>
+    <tr><td><code>/* comment */</code>, <code>//</code>, <code>#</code></td><td><code># comment</code></td><td>Triple-quoted strings are doc-strings when they are the first thing in a body.</td></tr>
+    <tr><td><code>;</code> statement terminators</td><td>a newline ends the statement</td><td>Semicolons are legal and almost never used.</td></tr>
+    <tr><td><code>null</code> / <code>undef</code> / <code>NULL</code></td><td><code>None</code></td><td><code>is None</code> to test; <code>==</code> also works but <code>is</code> is the idiom.</td></tr>
+    <tr><td><code>true</code>/<code>false</code></td><td><code>True</code>/<code>False</code></td><td>Capitalised. Empty list/dict/string/None are falsy.</td></tr>
+    <tr><td><code>var x = 1;</code> / <code>let</code> / <code>my</code></td><td><code>x = 1</code></td><td>No declarations, no <code>const</code>; the name is bound in the enclosing scope.</td></tr>
+    <tr><td><code>x.length</code>, <code>len(x)</code> in Perl</td><td><code>len(x)</code></td><td>For tensors use <code>x.shape[0]</code>; <code>.shape</code> is a tuple, not a property with methods.</td></tr>
+    <tr><td><code>for (i=0;i&lt;n;i++)</code></td><td><code>for i in range(n):</code></td><td><code>range(n)</code> is 0…n−1. No <code>i++</code>; there is <code>i += 1</code> if you really want a counter.</td></tr>
+    <tr><td><code>for (const x of xs)</code></td><td><code>for x in xs:</code></td><td>Add <code>enumerate(xs)</code> when you also want the index.</td></tr>
+    <tr><td><code>xs.map(x =&gt; …)</code></td><td><code>[f(x) for x in xs]</code></td><td>Comprehensions; also <code>{k: v for …}</code>, and a generator form with parentheses.</td></tr>
+    <tr><td><code>a.slice(1, 4)</code></td><td><code>a[1:4]</code></td><td>End index is exclusive. <code>a[-1]</code> is the last element; <code>a[::-1]</code> reverses.</td></tr>
+    <tr><td>Perl list/tuple</td><td><code>(a, b) = (1, 2)</code> — tuple unpacking</td><td><code>T, dk = Q.shape</code> is the idiom you will use constantly.</td></tr>
+    <tr><td><code>`$x`</code> interpolation / template literals</td><td><code>f"dk={dk}"</code></td><td>F-strings: expressions inside braces.</td></tr>
+    <tr><td><code>try { } catch (e) { }</code></td><td><code>try:</code> … <code>except ValueError as e:</code></td><td><code>raise ValueError("why")</code> to throw.</td></tr>
+    <tr><td><code>require</code> / <code>#include</code> / <code>import</code></td><td><code>import math</code>, <code>from pathlib import Path</code></td><td>Imports go at the top of the file by convention.</td></tr>
+    <tr><td>entry point</td><td><code>if __name__ == "__main__":</code></td><td>Only true when the file is run directly, not when it is imported — which is why the grader can import your file without running your demo.</td></tr>
+  </tbody>
+</table>
+
+<h2>The tensor idioms, in the order they appear</h2>
+
+<pre><code>import math
+import torch
+
+torch.set_printoptions(precision=3, sci_mode=False)   # <span class="cmt">readable printing: no 1.2345e+00</span>
+
+T, dk = Q.shape          # <span class="cmt">tuple unpacking; Q.shape is torch.Size([T, dk])</span>
+dk = Q.shape[-1]         # <span class="cmt">same thing, last axis; -2 is the one before it</span>
+
+scores = Q @ K.transpose(-2, -1)   # <span class="cmt">@ is matmul. A * B would be element-wise — a different operation</span>
+scores = scores / dk ** 0.5        # <span class="cmt">** is power; division is element-wise; dtype is preserved</span>
+weights = torch.softmax(scores, dim=-1)   # <span class="cmt">dim=-1: along the last axis, so each ROW sums to 1</span>
+
+weights.tolist()         # <span class="cmt">nested Python lists, for printing or handing to a browser page</span>
+float(weights[0, 0])     # <span class="cmt">a 0-dim tensor -> a number; .item() is the same thing</span>
+
+g = torch.Generator().manual_seed(7)      # <span class="cmt">reproducible randomness: same numbers on every run</span>
+torch.randn(4, 8, generator=g)
+
+Q64 = Q.double()         # <span class="cmt">float32 (default) -> float64, when you want exact comparisons</span>
+
+# batched matmul: (B, T, dk) @ (B, dk, p) -> (B, T, p)
+#   e.g. (2, 4, 8) @ (2, 8, 3) -> (2, 4, 3); the leading axes pass straight through</code></pre>
+
+<div class="note">
+  <span class="label">Two habits that save the most time</span>
+  <p><strong>Print the shape, not the tensor.</strong> <code>print(x.shape)</code> answers "why is this the wrong shape" in one line; printing a (64 × 64) tensor into a terminal answers nothing.</p>
+  <p><strong>Prefer <code>transpose(-2, -1)</code> to <code>.T</code>.</strong> They agree for 2-D tensors; on anything with a batch or head axis <code>.T</code> reverses <em>all</em> the axes (and current PyTorch warns you).</p>
+</div>
+
+<h2>Errors you will actually hit</h2>
+
+<table>
+  <thead><tr><th>Message (verbatim from this workspace's interpreter)</th><th>What it means</th></tr></thead>
+  <tbody>
+    <tr><td><code>IndentationError: expected an indented block after function definition on line 1</code></td><td>A <code>def …:</code> with nothing indented under it yet.</td></tr>
+    <tr><td><code>SyntaxError: expected ':'</code></td><td>The colon is missing from a <code>def</code>, <code>if</code>, <code>for</code> or <code>while</code> head.</td></tr>
+    <tr><td><code>RuntimeError: mat1 and mat2 shapes cannot be multiplied (2x3 and 4x5)</code></td><td>The inner numbers differ: the shape rule from lesson 00, enforced.</td></tr>
+    <tr><td><code>TypeError: unsupported operand type(s) for @: 'Tensor' and 'int'</code></td><td>One side of <code>@</code> is not a tensor — usually a plain number crept in.</td></tr>
+    <tr><td><code>IndexError: Dimension out of range (expected to be in range of [-2, 1], but got 3)</code></td><td>An axis argument points outside the tensor. For a 2-D tensor the legal axes are <code>-2, -1, 0, 1</code>.</td></tr>
+    <tr><td><code>NameError: name 'X' is not defined</code></td><td>A typo, or a missing <code>torch.</code> / <code>math.</code> prefix. Python does not guess.</td></tr>
+    <tr><td><code>AttributeError: 'Tensor' object has no attribute 'X'</code></td><td>Wrong method name — check the docs; the spelling must be exact.</td></tr>
+  </tbody>
+</table>
+
+<h2>The loop in this workspace</h2>
+
+<pre><code>./bin/grade 0001                                    # <span class="cmt">run the lesson's checks against exercises/0001_attention.py</span>
+./bin/grade 0001 --show-solution                     # <span class="cmt">print a reference solution (attempt first)</span>
+./.venv/bin/python exercises/0001_attention.py       # <span class="cmt">run your file: prints your own numbers as a table</span>
+./.venv/bin/python -i exercises/0001_attention.py    # <span class="cmt">…then keep the prompt, with your functions in scope</span>
+./bin/grader                                          # <span class="cmt">optional: lets the lesson page fetch its own verdicts</span></code></pre>
+
+<p>The interpreter is the one inside this workspace's virtual environment — that is what <code>.venv/bin/python</code> means, and what the <code>bin/</code> scripts call, so <code>torch</code> is always the right version.</p>
+
+<h2>Where this came from</h2>
+
+<ul>
+  <li><a href="https://docs.python.org/3/tutorial/">The Python Tutorial</a> — the canonical source; <a href="https://docs.python.org/3/tutorial/controlflow.html">§4 control flow</a> covers <code>def</code>, <code>if</code>, <code>for</code>, <code>range</code> and unpacking in a few pages.</li>
+  <li><a href="https://docs.pytorch.org/tutorials/beginner/basics/tensorqs_tutorial.html">PyTorch — Tensors tutorial</a> — shapes, dtypes, <code>@</code>, broadcasting, in the library's own words.</li>
+  <li><a href="https://docs.pytorch.org/docs/stable/generated/torch.softmax.html"><code>torch.softmax</code> docs</a> — the <code>dim</code> argument and the numerical-stability note behind lesson 01's step 3.</li>
+</ul>
+
+<footer class="lesson-foot">
+  <p>Used by <a href="../lessons/0001-attention-as-a-weighted-average.html">Lesson 01 — Attention is a weighted average</a> and every Python lesson after it. Ask your agent about any construct here that needs a second example.</p>
+</footer>
+
+</body>
+</html>

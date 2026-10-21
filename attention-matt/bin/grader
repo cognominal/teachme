@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Serve this workspace and grade on request: lesson pages fetch their own verdicts.
+#   ./bin/grader            http://127.0.0.1:8757
+#   ./bin/grader --port 9000
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(dirname "$here")"
+exec "$root/.venv/bin/python" "$root/tools/grader/serve.py" "$@"

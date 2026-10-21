@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 00 — Matrices: the only maths attention needs</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 00 · <a href="../MISSION.md">mission</a>: write attention from scratch and make it work</p>
+<h1>Matrices: the only maths attention needs</h1>
+<p class="subtitle">Rows are tokens. Three operations. One shape rule. Then your own code produces a real score grid.</p>
+
+<p class="lead">Attention is three operations on tables of numbers. If you can write those three and predict their shapes before running them, no later lesson in this course needs new maths. That is this page: <strong>dot product</strong>, <strong>matrix multiply</strong>, <strong>transpose</strong> — then the grid attention starts from, computed by your functions.</p>
+
+<div class="note">
+  <span class="label">The one idea</span>
+  <p>A matrix here is just an array of arrays — the thing you already write in JS. Nothing is hidden behind the notation: <code>[[1,2],[3,4]]</code> <em>is</em> a 2 × 2 matrix. Every operation below is a loop you could write in your sleep; the only new skill is knowing which shape comes out.</p>
+</div>
+
+<h2>1 · A matrix is a list of lists, read as rows of tokens</h2>
+
+<table>
+  <thead><tr><th>Name</th><th>What it is</th><th>In code</th></tr></thead>
+  <tbody>
+    <tr><td>scalar</td><td>one number</td><td><code>2.5</code></td></tr>
+    <tr><td>vector</td><td><em>n</em> numbers in order — one token's features</td><td><code>[1.5, −0.2, 0.7]</code></td></tr>
+    <tr><td>matrix</td><td>a list of vectors — a sequence of tokens</td><td><code>[[…], […]]</code></td></tr>
+    <tr><td>shape</td><td>how many rows × how many columns</td><td><code>[A.length, A[0].length]</code> → <code>(2 × 3)</code></td></tr>
+    <tr><td>element</td><td>one cell, addressed <code>A[row][col]</code></td><td><code>A[1][2]</code></td></tr>
+  </tbody>
+</table>
+
+<pre><code>var A = [[1.5, -0.2, 0.7],      // row 0 — token 0's features (3 of them)
+         [0.1,  0.9, -0.4]];    // row 1 — token 1's features
+
+A.length        // 2   rows = tokens, written T
+A[0].length     // 3   columns = features per token, written d
+                //     so A is a (T × d) matrix = (2 × 3)</code></pre>
+
+<div class="note">
+  <span class="label">The convention this whole course uses</span>
+  <p><strong>One row = one token.</strong> That is the convention in <a href="https://arxiv.org/abs/1706.03762">Vaswani et al.</a>, in every shape in this workspace, and in the code you will write. Shapes are written <code>(rows × columns)</code> — <code>(T × d)</code> means "T tokens, d numbers each".</p>
+  <p>Other teachers draw it the other way: 3Blue1Brown's linear-algebra series, which is the best thing on matrices ever made, draws a vector as an arrow and stacks vectors as <em>columns</em>. Same maths, transposed picture.<span class="sidenote">If a diagram elsewhere disagrees with this page, check whether it stacked tokens in columns. Fluent readers transpose in their head; you do not have to yet.</span></p>
+</div>
+
+<h2>2 · Operation 1 — the dot product: two rows in, one number out</h2>
+
+<p>Multiply the two vectors element by element, then add everything up:</p>
+
+<div class="formula">a · b = a<sub>1</sub>b<sub>1</sub> + a<sub>2</sub>b<sub>2</sub> + … + a<sub>n</sub>b<sub>n</sub></div>
+
+<p>By hand: <code>[1, 2, 3] · [0, 1, 4]</code> = <code>0 + 2 + 12</code> = <code>14</code>. In JS, one pass with a running total:</p>
+
+<pre><code>var total = 0;
+for (var i = 0; i &lt; a.length; i++) total += a[i] * b[i];
+// 14</code></pre>
+
+<p><strong>What the number means.</strong> It is a <em>similarity</em>: large and positive when the two vectors point the same way, near zero when they are unrelated, negative when they disagree. Attention's entire notion of "relevant" is this one number — the layer decides what to look at by comparing vectors this way. It is also where the word "attention <em>score</em>" comes from.</p>
+
+<p>One precondition: <strong>the two vectors must be the same length</strong>. Remember that sentence; every shape error in attention is a violation of it, one multiplication later.</p>
+
+<p>In PyTorch the same thing is an operator:</p>
+
+<pre><code>a @ b            # a single number, as a 0-dim tensor
+torch.dot(a, b)  # identical, spelled out</code></pre>
+
+<h2>3 · Operation 2 — matmul: many dot products at once</h2>
+
+<p>Matrix multiply is the dot product applied everywhere it can be:</p>
+
+<div class="formula">(m × n) · (n × p) → (m × p)</div>
+
+<p>The rule, in four words: <strong>inner numbers must match</strong>. The <em>n</em> of the left matrix and the <em>n</em> of the right one have to be the same, because that is the length of the vectors being dotted. Those two inner numbers then disappear; the outer ones <em>m</em> and <em>p</em> survive as the shape of the answer.</p>
+
+<p>Cell <code>(i, j)</code> of the product is <strong>row <em>i</em> of A dotted with column <em>j</em> of B</strong> — that is the whole definition:</p>
+
+<div class="formula">C<sub>ij</sub> = A<sub>i·</sub> · B<sub>·j</sub></div>
+
+<p>By hand, (2 × 3) · (3 × 2) → (2 × 2):</p>
+
+<pre><code>A = [[1, 2, 3],          B = [[1, 0],          A · B = [[4,  5],
+     [4, 5, 6]]               [0, 1],                   [10, 11]]
+                              [1, 1]]
+
+row 0 of A: [1,2,3]  ·  col 0 of B: [1,0,1]  =  1 + 0 + 3  =  4
+row 0 of A: [1,2,3]  ·  col 1 of B: [0,1,1]  =  0 + 2 + 3  =  5
+row 1 of A: [4,5,6]  ·  col 0 of B: [1,0,1]  =  4 + 0 + 6  = 10
+row 1 of A: [4,5,6]  ·  col 1 of B: [0,1,1]  =  0 + 5 + 6  = 11</code></pre>
+
+<p>One mental model that survives contact with real code: <strong>matmul applies B to every row of A</strong>. Rows go in, rows come out, and the row count never changes. Attention is built on that: a token's row goes in, a new row for that same token comes out.</p>
+
+<table>
+  <thead><tr><th>If you write…</th><th>What happens</th></tr></thead>
+  <tbody>
+    <tr><td>shapes that don't match, e.g. (2 × 3) · (2 × 3)</td><td>no product exists at all. PyTorch says <code>mat1 and mat2 shapes cannot be multiplied (2x3 and 2x3)</code>; JS just gives you <code>NaN</code>s if you loop stubbornly.</td></tr>
+    <tr><td>the operands the other way round, <code>B · A</code></td><td>often a legal product with a <em>different</em> shape and different numbers: (3 × 2) · (2 × 3) → (3 × 3). Matmul does not commute.</td></tr>
+    <tr><td>element-wise, <code>A[i][j] * B[i][j]</code></td><td>same shape out, but nothing ever mixes: it is not matmul, and in attention it would mean each token only ever sees itself.</td></tr>
+  </tbody>
+</table>
+
+<h3>Drill: predict the shape before you compute it</h3>
+
+<p>This is the one skill in this lesson that has to be automatic. Click the presets (the last two are the two products inside attention), or type your own shapes, and check yourself before the rule fires.</p>
+
+<div id="drill"></div>
+
+<h2>4 · Operation 3 — transpose: flip which axis is which</h2>
+
+<p>Transposing turns rows into columns and columns into rows: a (3 × 5) matrix becomes (5 × 3). Cell <code>A[i][j]</code> lands at <code>Aᵀ[j][i]</code>.</p>
+
+<pre><code>A  = [[1, 2, 3],        Aᵀ = [[1, 4],
+      [4, 5, 6]]               [2, 5],
+                               [3, 6]]</code></pre>
+
+<p><strong>Why attention cannot do without it.</strong> Matmul pairs <em>rows of the left operand</em> with <em>columns of the right operand</em>. Every key lives in a <em>row</em> of <code>K</code>. To let one query's row reach across every key in a single product, the keys have to become columns — so we transpose first:</p>
+
+<div class="formula">Q · K<sup>T</sup> &nbsp;=&nbsp; (T × d<sub>k</sub>) · (d<sub>k</sub> × T) &nbsp;→&nbsp; (T × T)</div>
+
+<p>The result is one row per token <em>asking</em>, one column per token <em>answering</em>; entry <code>(i, j)</code> is "how much does token <em>i</em>'s row like token <em>j</em>'s row". Notice it is square <em>because</em> of the transpose — without it the two inner numbers are both <code>d<sub>k</sub></code>, the product does not exist, and no amount of looping rescues it.</p>
+
+<div class="note">
+  <span class="label">Python trap, verified in this workspace</span>
+  <p><code>K.T</code> is correct for a plain 2-D matrix. On a tensor with batch or head dimensions it reverses <em>all</em> axes — PyTorch prints a deprecation warning telling you to stop. Real code always writes <code>K.transpose(-2, -1)</code>: "swap the last two axes". Same result on 2-D, correct meaning everywhere else.</p>
+</div>
+
+<h2>5 · Write all three yourself</h2>
+
+<p>Three tiny functions. Part B uses your part A live, so a broken dot product shows up as a broken matmul — fix upward, not downward.</p>
+
+<div id="exercise"></div>
+
+<h2>6 · Where attention uses these three</h2>
+
+<p>That was the whole mathematical toolkit. Attention is:</p>
+
+<table>
+  <thead><tr><th>Line</th><th>Operation</th><th>Shape</th><th>Who wrote the maths</th></tr></thead>
+  <tbody>
+    <tr><td><code>scores = Q · K<sup>T</sup></code></td><td>matmul + transpose</td><td>(T × d<sub>k</sub>) · (d<sub>k</sub> × T) → <strong>(T × T)</strong></td><td>you, below</td></tr>
+    <tr><td><code>weights = softmax<sub>rows</sub>(scores)</code></td><td>normalise each row to sum to 1</td><td>(T × T)</td><td>lesson 01</td></tr>
+    <tr><td><code>output = weights · V</code></td><td>matmul</td><td>(T × T) · (T × d<sub>v</sub>) → <strong>(T × d<sub>v</sub>)</strong></td><td>you, already</td></tr>
+  </tbody>
+</table>
+
+<p>Press the button — this is your own <code>matmul</code> and your own <code>transpose</code> running on a real example: 4 tokens, key width 3.</p>
+
+<div class="controls">
+  <button class="btn btn--primary" id="recompute">Compose it with my code</button>
+</div>
+<div id="compose"></div>
+
+<h2>7 · The same three operations in PyTorch</h2>
+
+<p>This page's exercises are JavaScript arrays, because the shape rule is easiest to see in the language you already have. <strong>From lesson 01 on, all the code is Python + PyTorch</strong> — here is the same three operations again, annotated, so that reading it is already familiar ground:</p>
+
+<pre><code>import torch
+
+A = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])    # a (2, 3) matrix
+B = torch.tensor([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])  # a (3, 2) matrix
+
+A @ B                   # <span class="cmt">matmul — '@' is an operator, not punctuation. (2, 3) @ (3, 2) -&gt; (2, 2)</span>
+A.T                     # <span class="cmt">transpose, (3, 2). Only trustworthy for 2-D tensors</span>
+A.transpose(-2, -1)     # <span class="cmt">same here: -1 is the last axis, -2 the one before it. Use this form</span>
+A.shape                 # <span class="cmt">torch.Size([2, 3]) — index it: A.shape[0] is 2, A.shape[-1] is 3</span>
+
+u = torch.tensor([1.0, 2.0, 3.0])
+v = torch.tensor([0.0, 1.0, 4.0])
+u @ v                   # <span class="cmt">two 1-D tensors -&gt; ONE number (a 0-dim tensor), just like your dot()</span>
+
+Q = torch.randn(2, 4, 8)                    # <span class="cmt">two sequences, 4 tokens, width 8 (a batch — lesson 03)</span>
+(Q @ Q.transpose(-2, -1)).shape             # <span class="cmt">torch.Size([2, 4, 4]): the batch axis passes through untouched</span></code></pre>
+
+<p>Two things a Python reader needs to know that a JS reader would guess wrong. First, shapes are tuples you index — there is no <code>A.length</code>; it is <code>A.shape[0]</code>, and negative indices count from the end. Second, once a batch dimension exists, matmul checks only the last two axes and leaves the leading ones alone, so the same five lines work for one sequence or two hundred.</p>
+
+<h2>8 · Check what stuck</h2>
+
+<div id="quiz"></div>
+
+<div class="note">
+  <span class="label">Do this before you close the tab</span>
+  <p>Say the shape rule out loud once: <em>inner numbers must match, outer numbers survive</em>. Then, tomorrow, without opening this page, write the three functions on paper and work out the shape of <code>(6 × 8) · (8 × 3) · (3 × 6)</code> without computing a single number. That retrieval is what makes it yours.</p>
+</div>
+
+<div class="source">
+  <span class="label">Primary source · watch this next (chapters 3 and 4)</span>
+  <p><a href="https://www.3blue1brown.com/lessons/matrix-multiplication/">3Blue1Brown, <em>Essence of Linear Algebra</em> — ch. 4, "Matrix multiplication as composition"</a> (with ch. 3 first, on linear transformations). This is the <em>why</em> behind the rule you just drilled: multiplying two matrices means applying one transformation after another, and multiplying a matrix by a vector means applying it to every column. Grant Sanderson's text adaptation is on the page if you would rather read than watch.</p>
+  <p>Caveat carried from §1: that series stacks vectors as <strong>columns</strong> and mostly works in 2-D while it builds intuition. Our grids are the transpose of theirs. If you want the mechanical rule in textbook form instead — including batched shapes — read <a href="https://d2l.ai/chapter_preliminaries/linear-algebra.html">Dive into Deep Learning §2.3, <em>Linear Algebra</em></a>.</p>
+</div>
+
+<div class="source">
+  <span class="label">Keep for later</span>
+  <p><a href="../reference/matrix-ops.html">Reference sheet: matrix ops for attention</a> — the shape rule, the two products attention is made of, the PyTorch mapping and the four shape errors, on one printable page.</p>
+  <p><a href="../reference/glossary.html">Glossary</a> — every term this course uses, defined once. Check any word in a lesson against it.</p>
+  <p><a href="0001-attention-as-a-weighted-average.html">Lesson 01 — Attention is a weighted average</a> — takes this page's <code>Q · Kᵀ</code> grid, turns each row into a distribution with softmax, and mixes the values. Nothing new is required beyond these three operations plus one row-wise normalisation.</p>
+</div>
+
+<footer class="lesson-foot">
+  <p><strong>Ask your teacher.</strong> I'm your agent in this workspace — ask me anything this page glossed over: why matmul is defined as rows-against-columns at all, how to do this without writing loops, what "vector" means when the numbers come from a learned model, why a shape error is so common on the first attempt, or to make up more shape drills for you.</p>
+  <p>Next lesson: <a href="0001-attention-as-a-weighted-average.html">Attention is a weighted average</a> — softmax, weights, and the mix, in PyTorch. The workspace's Python crib is <a href="../reference/python-for-js-devs.html">Python for JS/Perl/C developers</a>.</p>
+</footer>
+
+<script src="../assets/tensor.js"></script>
+<script src="../assets/shape.js"></script>
+<script src="../assets/matrix-view.js"></script>
+<script src="../assets/exercise.js"></script>
+<script src="../assets/quiz.js"></script>
+<script>
+(function () {
+  "use strict";
+  var T = window.T;
+
+  /* ---------- the example used for the composition panel ---------- */
+  var TOKENS = ["the", "cat", "sat", "mat"];
+  var Q = [[1.0, 0.0, 0.0],
+           [0.0, 1.0, 0.0],
+           [0.5, 0.5, 0.0],
+           [0.0, 0.0, 1.0]];
+  var K = [[1.0,  0.0, 0.0],
+           [0.8,  0.6, 0.0],
+           [0.0,  1.0, 0.0],
+           [0.0, -1.0, 1.0]];
+
+  /* ---------- independent references used only by the tests ---------- */
+  function refDot(a, b) {
+    var s = 0;
+    for (var i = 0; i < a.length; i++) s += a[i] * b[i];
+    return s;
+  }
+
+  function refMatmul(A, B) {
+    var out = [];
+    for (var i = 0; i < A.length; i++) {
+      var row = [];
+      for (var j = 0; j < B[0].length; j++) {
+        var s = 0;
+        for (var k = 0; k < B.length; k++) s += A[i][k] * B[k][j];
+        row.push(s);
+      }
+      out.push(row);
+    }
+    return out;
+  }
+
+  function refTranspose(A) {
+    var out = [];
+    for (var j = 0; j < A[0].length; j++) {
+      var row = [];
+      for (var i = 0; i < A.length; i++) row.push(A[i][j]);
+      out.push(row);
+    }
+    return out;
+  }
+
+  function identity(n) {
+    var out = [];
+    for (var i = 0; i < n; i++) {
+      var row = [];
+      for (var j = 0; j < n; j++) row.push(i === j ? 1 : 0);
+      out.push(row);
+    }
+    return out;
+  }
+
+  function elementwise(A, B) {
+    return A.map(function (row, i) { return row.map(function (x, j) { return x * B[i][j]; }); });
+  }
+
+  function sameShape(a, b) {
+    try { return T.shape(a)[0] === T.shape(b)[0] && T.shape(a)[1] === T.shape(b)[1]; }
+    catch (e) { return false; }
+  }
+
+  /* ---------- the shape drill ---------- */
+  Shape.explorer(document.getElementById("drill"), {
+    a: "3x4", b: "4x5",
+    presets: [
+      { label: "3x4 · 4x5", note: "inner 4 = 4 → 3×5", a: "3x4", b: "4x5" },
+      { label: "3x4 · 3x4", note: "inner 4 ≠ 3 — no product at all", a: "3x4", b: "3x4" },
+      { label: "8x4 · 4x8", note: "the same two shapes the other way round: legal, but 8×8 not 4×4", a: "8x4", b: "4x8" },
+      { label: "2x4x8 · 2x8x4", note: "a batch: the leading 2 passes straight through", a: "2x4x8", b: "2x8x4" },
+      { label: "Q · Kᵀ — 4x8 · 8x4", note: "every query against every key → 4×4 (attention's first line)", a: "4x8", b: "8x4" },
+      { label: "weights · V — 4x4 · 4x3", note: "mix the value rows → 4×3 (attention's last line)", a: "4x4", b: "4x3" }
+    ]
+  });
+
+  /* ---------- exercise ---------- */
+  var parts = Exercise.mount({
+    host: document.getElementById("exercise"),
+    lessonId: "0000-matrices",
+    heading: "Your implementation",
+    note: "Helpers: <code>T.shape(m)</code> → <code>[rows, cols]</code>, <code>T.describe(m)</code> → <code>\"(3x4)\"</code>, <code>T.randn(rows, cols, seed)</code> → reproducible test data, <code>T.isClose(a, b)</code>, <code>T.fmt(m)</code> prints a matrix.",
+    prelude: { T: T },
+    parts: [
+      {
+        id: "dot",
+        title: "Part A — dot(a, b)",
+        prompt: "<p>Return <strong>one number</strong>: the two vectors multiplied element by element, then added. They are guaranteed to be the same length.</p>" +
+                "<p>By hand: <code>dot([1,2,3], [0,1,4])</code> is <code>0 + 2 + 12 = 14</code>.</p>",
+        scope: ["T"],
+        params: ["a", "b"],
+        stub: "// a, b: two vectors of the same length   ->   return one number\n" +
+              "// a[0]*b[0] + a[1]*b[1] + ...\n" +
+              "var total = 0;\n\n" +
+              "return total;\n",
+        solution: "var total = 0;\n" +
+                  "for (var i = 0; i < a.length; i++) total += a[i] * b[i];\n" +
+                  "return total;\n",
+        tests: [
+          {
+            name: "returns a single finite number",
+            run: function (student) {
+              var r = student([1, 2, 3], [4, 5, 6]);
+              return {
+                ok: typeof r === "number" && isFinite(r),
+                detail: "got " + JSON.stringify(r) + " — that is " +
+                  (r === null ? "a null value" : Array.isArray(r) ? "a list" : "a " + typeof r) + ", not a number"
+              };
+            }
+          },
+          {
+            name: "matches the reference on 20 random pairs",
+            run: function (student) {
+              for (var t = 0; t < 20; t++) {
+                var a = T.randn(1, 12, 100 + t)[0];
+                var b = T.randn(1, 12, 200 + t)[0];
+                var want = refDot(a, b);
+                var got = student(a, b);
+                if (!(Math.abs(got - want) < 1e-9)) {
+                  return { ok: false, detail: "pair " + t + ": got " + got + ", wanted " + want };
+                }
+              }
+              return { ok: true, detail: "all 20 pairs agree to 1e-9" };
+            }
+          },
+          {
+            name: "doubling one vector doubles the answer",
+            run: function (student) {
+              var a = T.randn(1, 9, 301)[0];
+              var b = T.randn(1, 9, 302)[0];
+              var base = student(a, b);
+              if (!(Math.abs(base) > 1e-6)) {
+                return { ok: false, detail: "for these non-perpendicular vectors the answer should not be near 0; got " + base };
+              }
+              var doubled = a.map(function (x) { return 2 * x; });
+              var d = Math.abs(student(doubled, b) - 2 * base);
+              return { ok: d < 1e-9, detail: "dot(2a, b) should be 2 × dot(a, b); difference " + d.toExponential(2) };
+            }
+          },
+          {
+            name: "single-element vectors multiply",
+            run: function (student) {
+              var got = student([3], [4]);
+              return { ok: Math.abs(got - 12) < 1e-12, detail: "got " + got + ", wanted 12" };
+            }
+          }
+        ],
+        diagnose: [
+          {
+            when: function (student) { return Array.isArray(student([1, 2], [3, 4])); },
+            hint: "You returned a list of products — that is element-wise multiplication. A dot product takes those products and <em>adds</em> them, so the answer is a single number."
+          },
+          {
+            when: function (student) { return Math.abs(student([1, 2], [3, -4]) - 11) < 1e-9; },
+            hint: "You used <code>Math.abs</code> on each product: <code>3 + 8 = 11</code> instead of <code>3 − 8 = −5</code>. The sign is information — vectors pointing opposite ways must score negative."
+          },
+          {
+            when: function (student) { return Math.abs(student([1, 2], [3, 4]) - 21) < 1e-9; },
+            hint: "You summed each vector first, then multiplied (<code>3 × 7 = 21</code>). A dot product pairs the elements up first: <code>1×3 + 2×4 = 11</code>."
+          },
+          {
+            when: function () { return true; },
+            hint: "One loop, one running total: <code>for (var i = 0; i &lt; a.length; i++) total += a[i] * b[i];</code>"
+          }
+        ]
+      },
+      {
+        id: "matmul",
+        title: "Part B — matmul(A, B)",
+        prompt: "<p>Return the product of two matrices: <code>(m × n) · (n × p) → (m × p)</code>. Cell <code>(i, j)</code> of the answer is row <em>i</em> of <code>A</code> dotted with column <em>j</em> of <code>B</code>.</p>" +
+                "<p>Your <code>dot(a, b)</code> from part A is injected live — use it, and fix part A first if this misbehaves.</p>",
+        scope: ["T", "dot"],
+        sources: { dot: "dot" },
+        params: ["A", "B"],
+        stub: "// A: (m x n)   B: (n x p)   ->   return (m x p)\n" +
+              "// B is guaranteed to have exactly as many rows as A has columns.\n" +
+              "var out = [];\n\n" +
+              "return out;\n",
+        solution: "var out = [];\n" +
+                  "for (var i = 0; i < A.length; i++) {\n" +
+                  "  var row = [];\n" +
+                  "  for (var j = 0; j < B[0].length; j++) {\n" +
+                  "    var column = [];\n" +
+                  "    for (var k = 0; k < B.length; k++) column.push(B[k][j]);\n" +
+                  "    row.push(dot(A[i], column));\n" +
+                  "  }\n" +
+                  "  out.push(row);\n" +
+                  "}\n" +
+                  "return out;\n",
+        tests: [
+          {
+            name: "a (3 x 4) times a (4 x 5) comes out (3 x 5)",
+            run: function (student) {
+              var C = student(T.randn(3, 4, 401), T.randn(4, 5, 402));
+              var s = T.shape(C);
+              return { ok: s[0] === 3 && s[1] === 5, detail: "got " + T.describe(C) + ", wanted (3x5)" };
+            }
+          },
+          {
+            name: "matches the reference on random input",
+            run: function (student) {
+              var A = T.randn(5, 6, 411), B = T.randn(6, 3, 412);
+              var C = student(A, B);
+              if (!sameShape(C, refMatmul(A, B))) return { ok: false, detail: "got " + T.describe(C) + ", wanted (5x3)" };
+              var d = T.maxAbsDiff(C, refMatmul(A, B));
+              return { ok: d < 1e-9, detail: "largest cell differs by " + d.toExponential(2) };
+            }
+          },
+          {
+            name: "multiplying by the identity changes nothing",
+            run: function (student) {
+              var A = T.randn(4, 4, 421);
+              var C = student(A, identity(4));
+              if (!sameShape(C, A)) return { ok: false, detail: "got " + T.describe(C) + ", wanted (4x4)" };
+              var d = T.maxAbsDiff(C, A);
+              return { ok: d < 1e-9, detail: "A · I should be A (largest difference " + d.toExponential(2) + ")" };
+            }
+          }
+        ],
+        diagnose: [
+          {
+            when: function (student) {
+              var A = T.randn(4, 4, 431), B = T.randn(4, 4, 432);
+              var C = student(A, B);
+              return sameShape(C, A) && T.isClose(C, refMatmul(B, A), 1e-9) && !T.isClose(C, refMatmul(A, B), 1e-9);
+            },
+            hint: "You multiplied the other way round: <code>B · A</code>. Matmul does not commute — <code>A</code> supplies the rows (the tokens), <code>B</code> supplies the columns (what they are compared against)."
+          },
+          {
+            when: function (student) {
+              var A = T.randn(3, 4, 441), B = T.randn(4, 3, 442);
+              return T.isClose(student(A, B), elementwise(A, B), 1e-9);
+            },
+            hint: "That is element-wise multiplication: every cell stayed where it was and nothing mixed across rows. Matmul pairs <em>every</em> row of A with <em>every</em> column of B — the output shape comes from the outer dimensions, not the input's."
+          },
+          {
+            when: function (student) {
+              var A = T.randn(4, 5, 451), B = T.randn(5, 4, 452);
+              var C = student(A, B);
+              return sameShape(C, A);
+            },
+            hint: "The output has the wrong shape: it must be (rows of A × columns of B). Two loops, or three — but the two <em>outer</em> counts decide the answer's shape, and the inner one (the shared length) disappears."
+          },
+          {
+            when: function () { return true; },
+            hint: "Build it as: for each row <em>i</em> of A, for each column <em>j</em> of B, push <code>dot(A[i], column_j)</code> into a new row. The column is <code>B.map(function (r) { return r[j]; })</code>."
+          }
+        ]
+      },
+      {
+        id: "transpose",
+        title: "Part C — transpose(A)",
+        prompt: "<p>Return the matrix with rows and columns flipped: <code>(m × n) → (n × m)</code>, cell <code>A[i][j]</code> landing at position <code>[j][i]</code>.</p>" +
+                "<p><code>[[1, 2, 3], [4, 5, 6]]</code> must become <code>[[1, 4], [2, 5], [3, 6]]</code>.</p>",
+        scope: ["T"],
+        params: ["A"],
+        stub: "// A: (m x n)   ->   return (n x m)\n" +
+              "var out = [];\n\n" +
+              "return out;\n",
+        solution: "var out = [];\n" +
+                  "for (var j = 0; j < A[0].length; j++) {\n" +
+                  "  var row = [];\n" +
+                  "  for (var i = 0; i < A.length; i++) row.push(A[i][j]);\n" +
+                  "  out.push(row);\n" +
+                  "}\n" +
+                  "return out;\n",
+        tests: [
+          {
+            name: "a (3 x 5) becomes (5 x 3)",
+            run: function (student) {
+              var At = student(T.randn(3, 5, 501));
+              var s = T.shape(At);
+              return { ok: s[0] === 5 && s[1] === 3, detail: "got " + T.describe(At) + ", wanted (5x3)" };
+            }
+          },
+          {
+            name: "matches the reference on random input",
+            run: function (student) {
+              var A = T.randn(4, 7, 511);
+              var At = student(A);
+              if (!sameShape(At, refTranspose(A))) return { ok: false, detail: "got " + T.describe(At) + ", wanted (7x4)" };
+              var d = T.maxAbsDiff(At, refTranspose(A));
+              return { ok: d < 1e-9, detail: "largest cell differs by " + d.toExponential(2) };
+            }
+          },
+          {
+            name: "cell [i][j] lands at [j][i]",
+            run: function (student) {
+              var A = [[1, 2, 3], [4, 5, 6]];
+              var got = JSON.stringify(student(A));
+              var want = JSON.stringify([[1, 4], [2, 5], [3, 6]]);
+              return { ok: got === want, detail: "got " + got + ", wanted " + want };
+            }
+          },
+          {
+            name: "transposing twice returns the original",
+            run: function (student) {
+              var A = T.randn(4, 7, 521);
+              var twice = student(student(A));
+              if (!sameShape(twice, A)) return { ok: false, detail: "got " + T.describe(twice) + ", wanted (4x7)" };
+              var d = T.maxAbsDiff(twice, A);
+              return { ok: d < 1e-9, detail: "Aᵀᵀ should be A (largest difference " + d.toExponential(2) + ")" };
+            }
+          }
+        ],
+        diagnose: [
+          {
+            when: function (student) {
+              var A = T.randn(4, 3, 531);
+              var At = student(A);
+              return sameShape(At, refTranspose(A)) && T.isClose(At, A.slice().reverse(), 1e-9);
+            },
+            hint: "You reversed the order of the rows. That reorders tokens — it does not swap which axis is which. Every cell moves to <code>[j][i]</code>; the first row of the answer is the first <em>column</em> of the input."
+          },
+          {
+            when: function (student) {
+              var S = T.randn(3, 3, 541);
+              return T.isClose(student(S), S, 1e-9);
+            },
+            hint: "You returned the matrix unchanged. On a square matrix a transpose is invisible to the eye but not to the numbers: <code>A[0][2]</code> must end up at <code>[2][0]</code>."
+          },
+          {
+            when: function () { return true; },
+            hint: "Swap the two loops: the output has one row per <em>column</em> of the input, and each output row collects <code>A[i][j]</code> as <code>i</code> runs down the input."
+          }
+        ]
+      }
+    ]
+  });
+
+  var byId = {};
+  parts.forEach(function (p) { byId[p.partId] = p; });
+
+  /* ---------- the composition panel, driven by whatever code exists right now ---------- */
+  function studentFn(id) {
+    var box = byId[id];
+    if (!box) return null;
+    try { return box.fn(); } catch (e) { return null; }
+  }
+
+  function call(f, args) {
+    if (!f) return null;
+    try {
+      var out = f.apply(null, args);
+      return Array.isArray(out) && Array.isArray(out[0]) ? out : null;
+    } catch (e) { return null; }
+  }
+
+  var composeHost = document.getElementById("compose");
+
+  function render() {
+    var myT = byId.transpose && call(studentFn("transpose"), [K]);
+    var myScores = byId.matmul && myT ? call(studentFn("matmul"), [Q, myT]) : null;
+    var usingMine = !!myScores;
+
+    var Kt = myT || refTranspose(K);
+    var scores = myScores || refMatmul(Q, refTranspose(K));
+
+    var html = "";
+    html += '<figure><figcaption>K<sup>T</sup> — ' +
+      (myT ? "produced by <strong>your</strong> <code>transpose()</code>" : "the <strong>reference</strong> implementation; your part C is not runnable yet") +
+      ". The rows of K have become columns.</figcaption>";
+    html += MatrixView.heatmap(Kt, { rowLabels: ["f0", "f1", "f2"], colLabels: TOKENS, corner: "Kᵀ" });
+    html += "</figure>";
+
+    html += '<figure><figcaption>scores = Q · K<sup>T</sup> — ' +
+      (usingMine ? "produced by <strong>your</strong> <code>matmul()</code>" : "computed by the <strong>reference</strong> implementation; your part B is not runnable yet") +
+      ". (4 × 3) · (3 × 4) → <strong>(4 × 4)</strong>.</figcaption>";
+    html += MatrixView.heatmap(scores, { rowLabels: TOKENS, colLabels: TOKENS, corner: "Q \\ K" });
+    html += "</figure>";
+
+    var flat = scores.map(function (r) { return r.slice(); });
+    var hasNegative = flat.some(function (r) { return r.some(function (x) { return x < 0; }); });
+    html += '<p class="helpers">Row <code>sat</code> is the one to read: it likes <code>cat</code> (0.7) and itself (0.5), and it likes the key of <code>mat</code> the <em>least</em> (−0.5). ' +
+      (hasNegative ? "Negative scores are normal — they mean the two vectors point away from each other. " : "") +
+      "These are raw scores, <strong>not yet weights</strong>: nothing here sums to 1 and nothing has been mixed yet. Lesson 01 turns each row into a distribution and multiplies by V.</p>";
+
+    composeHost.innerHTML = html;
+  }
+
+  document.getElementById("recompute").addEventListener("click", render);
+  ["transpose", "matmul"].forEach(function (id) {
+    var box = byId[id];
+    if (!box) return;
+    var original = box.onPass;
+    box.onPass = function () { if (original) original(); render(); };
+  });
+  render();
+
+  /* ---------- retrieval practice ---------- */
+  Quiz.mount(document.getElementById("quiz"), {
+    title: "Retrieval practice",
+    items: [
+      {
+        q: "A is (3 × 4). B is (4 × 5). What is the shape of <code>A · B</code>?",
+        options: [
+          { text: "3 × 5", correct: true },
+          { text: "4 × 4" },
+          { text: "5 × 3" },
+          { text: "3 × 4" }
+        ],
+        explain: "The inner numbers (4 and 4) must match and then vanish; the outer numbers (3 and 5) survive. (3 × 4) · (4 × 5) → (3 × 5)."
+      },
+      {
+        q: "In one line: when does the product <code>A · B</code> exist at all?",
+        options: [
+          { text: "When A's columns match B's rows." , correct: true },
+          { text: "When A's rows match B's columns." },
+          { text: "When A and B have identical shapes." },
+          { text: "When B's rows match A's own rows." }
+        ],
+        explain: "A's columns are the length of one row of A; B's rows are the number of columns to dot against. Those two counts must be equal — that is the entire precondition, and it is the reason attention transposes K."
+      },
+      {
+        q: "Q is (6 × 8) and K is (6 × 8). What shape is <code>Q · K<sup>T</sup></code>?",
+        options: [
+          { text: "6 × 6", correct: true },
+          { text: "8 × 8" },
+          { text: "6 × 8" },
+          { text: "8 × 6" }
+        ],
+        explain: "Kᵀ is (8 × 6), so (6 × 8) · (8 × 6) → (6 × 6): one row per token asking, one column per token answering. Without the transpose, (6 × 8) · (6 × 8) has inner numbers 8 against 6 — no product exists."
+      },
+      {
+        q: "How does <code>K · Q<sup>T</sup></code> compare with <code>Q · K<sup>T</sup></code>?",
+        options: [
+          { text: "It is exactly the transpose of it." , correct: true },
+          { text: "It is the identical matrix again." },
+          { text: "It has a different shape entirely." },
+          { text: "It is a row-wise sum of the first." }
+        ],
+        explain: "In general (A · B)ᵀ = Bᵀ · Aᵀ, so K · Qᵀ is the transpose of Q · Kᵀ. Same numbers, mirrored across the diagonal — which is why putting the query on the left matters: row <em>i</em> must belong to token <em>i</em>."
+      },
+      {
+        q: "From memory: what does the dot product of two vectors measure? (One or two words.)",
+        type: "recall",
+        placeholder: "one or two words",
+        accept: [
+          /simil/i,
+          /align/i,
+          /agree|agreement/i,
+          /how much.*(match|relat)/i,
+          /relevan/i,
+          /related|relationship/i
+        ],
+        explain: "<strong>Similarity</strong> — how much the two vectors point the same way. Large positive: they agree. Near zero: unrelated. Negative: opposed. Everything attention calls \"relevance\" is this one number, and the shapes around it exist only to line the right pairs up."
+      }
+    ]
+  });
+})();
+</script>
+</body>
+</html>
