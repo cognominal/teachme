@@ -44,7 +44,10 @@ script, traceback and all while it is still a stub.
 
 `./bin/grader` is a thin wrapper around `tools/grader/serve.py`. It does two things:
 
-1. **Serves this whole directory as static files**, so every lesson page has a URL:
+1. **Serves this whole directory**, so every lesson page has a URL — and **`http://127.0.0.1:8757/`
+   is a lesson index**: every page in `lessons/`, by name, as a link. It is rebuilt from the
+   directory on every request, so a page you add shows up there without a restart. The individual
+   URLs (if you want them) are:
 
    | Lesson | URL under `http://127.0.0.1:8757/` |
    |---|---|
@@ -61,6 +64,7 @@ script, traceback and all while it is still a stub.
 
    | Route | Returns |
    |---|---|
+   | `GET /` | the lesson index (`/index.html` is the same page) |
    | `GET /health` | `{"ok": true, "lessons": ["0001", "0002", "0003"]}` |
    | `GET /grade?lesson=0003` | the same report `./bin/grade 0003 --json` prints |
 
@@ -74,8 +78,10 @@ Things worth knowing:
   code that arrived over the network: the only file graded is the one the lesson registry
   names under `exercises/`. Your file runs as a subprocess with a 20-second timeout and
   truncated output.
-- **Restart it after adding a lesson.** The lesson registry is read at import time, so a new
-  entry will not appear in `/health` until you stop and start `./bin/grader`.
+- **Restart it after adding a lesson.** The lesson registry (`/health`, `/grade`) is read at import
+  time, so a new entry will not appear there until you stop and start `./bin/grader`. The index at
+  `/` is different: it is built from `lessons/*.html` on every request, so a new page is listed
+  there immediately — it just cannot be graded until the restart.
 - **A page opened from disk still works.** With `file://` and no server, the exercise panel
   shows an offline box naming the commands to run instead of pretending to check anything;
   the prose, figures and quiz are all still usable.

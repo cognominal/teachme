@@ -19,7 +19,7 @@ the page at all.
 | `exercises/solutions/000N_*.py` | a reference solution. Never inside `exercises/` itself, so it cannot be read by accident. |
 | `tools/grader/core.py` | runs your file, runs the checks, produces the report. The single source of truth for both front ends. |
 | `tools/grader/cli.py` | `./bin/grade` — prints the report in the terminal. |
-| `tools/grader/serve.py` | `./bin/grader` — serves the workspace over http and answers `/grade` with the same report as JSON. |
+| `tools/grader/serve.py` | `./bin/grader` — serves the workspace over http, answers `/` with the lesson index and `/grade` with the same report as JSON. |
 | `tools/grader/checks/lesson_000N.py` | the checks for one lesson: reference implementations, tests, named diagnoses, `figures()`. |
 | `tools/grader/checks/support.py` | shared test helpers: `ATOL`, seeded `randn`, `as_tensor`, `shape_of`, `near`, `match_detail`, `max_diff`. |
 | `assets/*.js` | shared page components: `matrix-view.js`, `quiz.js`, `pyexercise.js`, `shape.js` (+ lesson 00's own JS harness in `exercise.js` / `tensor.js`). |
@@ -71,7 +71,9 @@ Then, still in the same request:
 5. `serve.py` serialises the whole report and the page renders it. The page never re-implements a
    check, and the terminal never re-implements the drawing: **one report, two front ends.**
 
-Endpoints: `GET /health` → `{"ok": true, "lessons": [...]}`; `GET /grade?lesson=000N` → the report.
+Endpoints: `GET /` → the lesson index, built from `lessons/*.html` per request (so a new page is
+listed without a restart, unlike `/health`); `GET /health` → `{"ok": true, "lessons": [...]}`;
+`GET /grade?lesson=000N` → the report. Everything else is served as a static file.
 The server binds `127.0.0.1` only, and the report header `Access-Control-Allow-Origin: *` is what
 lets a page opened as `file://` (origin `null`) fetch verdicts too.
 
