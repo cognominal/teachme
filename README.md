@@ -45,13 +45,19 @@ The loop is: `./bin/grader` to serve the pages, read a lesson, edit `exercises/<
 
 ## Setup
 
-Virtualenvs are not tracked (see `.gitignore`) and there is no lockfile, so
-recreate them per hierarchy:
+Each hierarchy has its own untracked `.venv` (see `.gitignore`) and there is no lockfile, so
+recreate the one you need. Both were built with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-python -m venv .venv
-.venv/bin/pip install numpy torch   # attention/ was built against numpy 2.5.4, torch 2.14.1+cpu
+# attention-matt/ — torch + numpy, on CPython 3.13.16
+uv venv --python 3.13 attention-matt/.venv
+uv pip install --python attention-matt/.venv/bin/python \
+    --index-url https://download.pytorch.org/whl/cpu torch
+uv pip install --python attention-matt/.venv/bin/python numpy   # torch warns at import without it
 ```
 
-`attention/` needs numpy and torch; `attention-matt/` needs `torch` alone (in its own
-`.venv`, Python 3.13.16, `torch 2.14.1+cpu`). Everything runs on CPU.
+`attention/.venv` is CPython 3.12.15 and needs numpy 2.5.4 as well. The `--index-url` matters:
+PyPI's `torch` resolves to the CUDA build and pulls the whole `nvidia-*` stack, while the CPU index
+resolves to `torch==2.14.1+cpu` and six small pure-Python dependencies. Note that uv-built venvs
+contain no `pip` (`uv pip install --python <venv>/bin/python …` is the equivalent). Everything runs
+on CPU. `attention-matt/README.md` has the longer version, including the stdlib-venv fallback.

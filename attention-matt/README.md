@@ -22,11 +22,12 @@ numbers it produces, and tells you the *specific* thing that is wrong when it do
 ## Quick start
 
 ```bash
-python -m venv .venv            # once
-./.venv/bin/pip install torch   # CPU build, ~200 MB. Nothing else is needed.
 ./bin/grader                    # serve the pages + the grading endpoint
 ./bin/lesson 0001               # open lesson 01
 ```
+
+If `.venv/` is missing (it is not tracked, so a clone has none), build it first — see
+[Recreating the environment](#recreating-the-environment).
 
 Then: read the page, edit the exercise file it names, click **Run the checks on my file**,
 and read the verdicts followed by **Your file's own output** — the real stdout of your
@@ -125,16 +126,46 @@ and starts at `0001` in a directory that does not exist yet.
 
 ## Recreating the environment
 
-`.venv/` is not tracked (see the repository `.gitignore`) and there is no lockfile:
+`.venv/` is not tracked (see the repository `.gitignore`) and there is no lockfile. It has to be at
+`attention-matt/.venv` — every `bin/` wrapper runs `.venv/bin/python` by path, so a venv somewhere
+else is invisible to them.
 
 ```bash
-python -m venv .venv
-./.venv/bin/pip install torch
+uv venv --python 3.13 .venv
+uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cpu torch
+uv pip install --python .venv/bin/python numpy    # for torch, not for our code — see below
 ```
 
-Measured here: Python 3.13.16, `torch 2.14.1+cpu`, CPU only — no CUDA, no GPU code anywhere
-in the workspace. `numpy` is present in this venv but nothing in the workspace imports it;
-torch is the whole dependency.
+Two non-obvious things about those lines:
+
+- **The index URL is not optional.** `pip install torch` from PyPI resolves to the CUDA build:
+  resolving `torch` against PyPI today pulls `nvidia-cublas`, `nvidia-cuda-runtime`,
+  `nvidia-cudnn-cu13` and friends — gigabytes of GPU libraries this workspace never touches. The
+  CPU index resolves to `torch==2.14.1+cpu` plus six small pure-Python dependencies (filelock,
+  fsspec, jinja2, networkx, sympy, typing-extensions), which is exactly what is installed here.
+- **numpy is there for torch, not for the workspace.** No file under `tools/`, `exercises/` or
+  `lessons/` imports numpy — but a venv built from the torch line alone still prints
+  `UserWarning: Failed to initialize NumPy: No module named 'numpy'` on every `import torch`
+  (measured in exactly that venv), and that stderr would land in the page's "your file's own
+  output" block. `numpy 2.5.4` is installed here.
+- **A uv-built venv has no `pip` inside it.** `./.venv/bin/python -m pip` answers
+  `No module named pip`. Use `uv pip install --python .venv/bin/python …`, or create the venv with
+  `uv venv --seed` to bundle pip. `uv` is not required by anything at run time; it only builds this.
+
+Without uv, the stdlib path works too:
+
+```bash
+python3 -m venv .venv                                                              # stdlib venv ships pip
+./.venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch
+```
+
+Measured on this machine: the uv-managed interpreter is CPython **3.13.16** and its `pyvenv.cfg`
+says `include-system-site-packages = false`; the system interpreter is `/usr/bin/python3` =
+**3.14.8** and has no torch at all (`python3 -c "import torch"` → `ModuleNotFoundError`) — which is
+precisely what the venv is for. The workspace has only ever been run against 3.13.16, so the stdlib
+path above is offered but untested. On disk here: `.venv/` is **833 MB**, **724 MB** of it torch;
+the cold-cache download is a few hundred MB, and the rebuild above took 2.2 seconds only because
+uv's wheel cache already had it.
 
 ---
 
@@ -144,7 +175,9 @@ torch is the whole dependency.
 |---|---|
 | Page shows "the grader is not running…" | Start `./bin/grader` and reload. The page works offline; it just cannot check your code. |
 | `Address already in use` | Another `./bin/grader` is already up — that *is* the server, use it, or `--port 9000`. |
-| `./bin/grade` fails with `No such file or directory` | The venv is missing: `python -m venv .venv && ./.venv/bin/pip install torch`. |
+| `./bin/grade` fails with `No such file or directory` | The venv is missing: `uv venv --python 3.13 .venv && uv pip install --python .venv/bin/python --index-url https://download.pytorch.org/whl/cpu torch`. |
+| `No module named pip` from `./.venv/bin/python -m pip` | Expected: uv-built venvs have no pip. Use `uv pip install --python .venv/bin/python …`, or `uv venv --seed`. |
+| `ModuleNotFoundError: No module named 'torch'` from a plain `python3` | You are running the system interpreter, not the venv's. Every `bin/` wrapper uses `.venv/bin/python` for exactly this reason. |
 | `/health` does not list the lesson you just added | The registry is read at import: restart `./bin/grader`. |
 | A new lesson's page 404s | Same cause as above; the server was started before the file existed. |
 | `no lesson starting with 0004` | Lesson ids are the file prefix in `lessons/`; list them with `ls lessons/`. |
