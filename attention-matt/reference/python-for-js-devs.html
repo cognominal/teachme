@@ -68,6 +68,47 @@ Q64 = Q.double()         # <span class="cmt">float32 (default) -> float64, when 
   <p><strong>Prefer <code>transpose(-2, -1)</code> to <code>.T</code>.</strong> They agree for 2-D tensors; on anything with a batch or head axis <code>.T</code> reverses <em>all</em> the axes (and current PyTorch warns you).</p>
 </div>
 
+<h2>Reshaping: view, reshape, transpose</h2>
+
+<pre><code>x.shape                       # <span class="cmt">torch.Size — a tuple of axis lengths; negative indices count from the end</span>
+x.view(T, H, dh)              # <span class="cmt">reinterpret the same memory; raises if the layout does not match</span>
+x.transpose(0, 1)             # <span class="cmt">swap two axes — moves NO data, so the result is usually not contiguous</span>
+x.reshape(T, H * dh)          # <span class="cmt">transpose then flatten; copies only if it has to</span>
+x.contiguous().view(T, H*dh)  # <span class="cmt">the same, spelled out: make it contiguous, then view</span>
+x.permute(1, 0, 2)            # <span class="cmt">more than two axes at once</span></code></pre>
+
+<table>
+  <thead><tr><th>Trap</th><th>What happens</th></tr></thead>
+  <tbody>
+    <tr><td><code>.view()</code> on a transposed tensor</td><td><code>RuntimeError: view size is not compatible with input tensor's size and stride (at least one dimension spans across two contiguous subspaces). Use .reshape(...) instead.</code> — the message names the fix.</td></tr>
+    <tr><td>The same <code>.view</code> sometimes works</td><td>When the strides happen to line up it succeeds, so a working <code>.view</code> proves nothing about your next reshape. Prefer <code>.reshape</code> after any transpose.</td></tr>
+    <tr><td><code>view(H, T, dh)</code> where you meant <code>view(T, H, dh)</code></td><td>No error at all: both have the same element count, so the arrangement is simply wrong. Only the values reveal it.</td></tr>
+    <tr><td>A slice is not contiguous</td><td><code>x[:, :4].view(...)</code> fails the same way even though the slice "looks" dense — slicing is a view with a stride.</td></tr>
+    <tr><td><code>.T</code> on anything above 2-D</td><td>It reverses <em>all</em> axes, not the last two. Use <code>transpose(-2, -1)</code> in attention code.</td></tr>
+  </tbody>
+</table>
+
+<h2>Masking: the idioms and the traps</h2>
+
+<pre><code>mask   = torch.tril(torch.ones(T, T))        # <span class="cmt">1 = may look, 0 = blocked; diagonal included</span>
+scores = scores.masked_fill(mask == 0, float("-inf"))   # <span class="cmt">fill where the condition is True</span>
+scores = torch.where(mask == 0, float("-inf"), scores)  # <span class="cmt">same edit, not in place</span>
+
+blocked = (mask == 0)                        # <span class="cmt">a bool tensor</span>
+scores.masked_fill(blocked, float("-inf"))   # <span class="cmt">a bool mask works directly</span>
+inverted = ~mask.bool()                      # <span class="cmt">~ flips a bool tensor; mask.bool() converts 0/1</span></code></pre>
+
+<table>
+  <thead><tr><th>Trap</th><th>What happens</th></tr></thead>
+  <tbody>
+    <tr><td><code>float("-inf")</code> is a Python float, not <code>math.inf</code></td><td>Both spellings are fine (<code>-math.inf</code> too). What matters is that it is large enough that <code>exp</code> underflows: any value below about −100 gives exactly 0 in float32.</td></tr>
+    <tr><td><code>0.0 * float("-inf")</code></td><td><code>nan</code> — IEEE arithmetic, not a Python quirk. Dividing or multiplying by a positive constant keeps <code>−∞</code>; multiplying by <code>0</code> destroys it.</td></tr>
+    <tr><td>a whole row at −∞</td><td><code>torch.softmax</code> gives <code>nan</code> (<code>0/0</code>), and the <code>nan</code> spreads through the next matmul into the whole batch.</td></tr>
+    <tr><td>mask of the wrong shape</td><td><code>RuntimeError: The size of tensor a (3) must match the size of tensor b (4) at non-singleton dimension 1</code> — the mask has to be <code>(T, T)</code> for a <code>(T, T)</code> score matrix.</td></tr>
+    <tr><td>masking after the softmax</td><td>No error, no <code>nan</code> — the rows just quietly stop summing to 1. This one has to be caught by a test, not by reading the output.</td></tr>
+  </tbody>
+</table>
+
 <h2>Errors you will actually hit</h2>
 
 <table>
@@ -85,11 +126,14 @@ Q64 = Q.double()         # <span class="cmt">float32 (default) -> float64, when 
 
 <h2>The loop in this workspace</h2>
 
-<pre><code>./bin/grade 0001                                    # <span class="cmt">run the lesson's checks against exercises/0001_attention.py</span>
-./bin/grade 0001 --show-solution                     # <span class="cmt">print a reference solution (attempt first)</span>
-./.venv/bin/python exercises/0001_attention.py       # <span class="cmt">run your file: prints your own numbers as a table</span>
-./.venv/bin/python -i exercises/0001_attention.py    # <span class="cmt">…then keep the prompt, with your functions in scope</span>
-./bin/grader                                          # <span class="cmt">optional: lets the lesson page fetch its own verdicts</span></code></pre>
+<pre><code>./bin/grade 0003                                     # <span class="cmt">checks for lesson 03 against exercises/0003_multihead.py</span>
+./bin/grade 0001                                     # <span class="cmt">…and lesson 01's checks, at any time</span>
+./bin/grade 0002 --file some/other.py                # <span class="cmt">use lesson 02's checks on a different file</span>
+./bin/grade 0002 --show-solution                     # <span class="cmt">print a reference solution (attempt it first)</span>
+./.venv/bin/python exercises/0002_masking.py         # <span class="cmt">run your file: prints your own numbers as a table</span>
+./.venv/bin/python -i exercises/0002_masking.py      # <span class="cmt">…then keep the prompt, with your functions in scope</span>
+./bin/grader                                          # <span class="cmt">optional: lets the lesson page fetch its own verdicts</span>
+./bin/lesson 0002                                     # <span class="cmt">open a lesson in the browser</span></code></pre>
 
 <p>The interpreter is the one inside this workspace's virtual environment — that is what <code>.venv/bin/python</code> means, and what the <code>bin/</code> scripts call, so <code>torch</code> is always the right version.</p>
 
@@ -102,7 +146,7 @@ Q64 = Q.double()         # <span class="cmt">float32 (default) -> float64, when 
 </ul>
 
 <footer class="lesson-foot">
-  <p>Used by <a href="../lessons/0001-attention-as-a-weighted-average.html">Lesson 01 — Attention is a weighted average</a> and every Python lesson after it. Ask your agent about any construct here that needs a second example.</p>
+  <p>Used by <a href="../lessons/0001-attention-as-a-weighted-average.html">Lesson 01 — Attention is a weighted average</a>, <a href="../lessons/0002-the-mask-and-the-scale.html">Lesson 02 — The mask and the scale</a>, <a href="../lessons/0003-several-weighted-averages.html">Lesson 03 — Several weighted averages at once</a> and every Python lesson after them. Ask your agent about any construct here that needs a second example.</p>
 </footer>
 
 </body>

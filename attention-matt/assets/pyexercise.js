@@ -42,7 +42,29 @@ window.PyExercise = (function () {
       "<p>then reload <code>" + spec.page + "</code> from " +
       "<code>http://127.0.0.1:" + DEFAULT_PORT + "/" + spec.page + "</code></p>" +
       "<p>The terminal loop does not need this service at all:</p>" +
-      '<div class="console-out">./bin/grade 0001</div>';
+      '<div class="console-out">./bin/grade ' + spec.lesson + "</div>";
+  }
+
+  /* The output of running the learner's file as a script — the second feedback
+   * loop the lesson pages describe, now visible without leaving the page.
+   * Rendered only when there is something to show, exactly like the CLI. */
+  function demoBlock(report) {
+    var out = report.output;
+    if (!out || (!out.stdout.trim() && !out.stderr.trim())) return null;
+    var box = h("div", "pyex-demo");
+    box.appendChild(h("div", "helpers", "<strong>Your file's own output.</strong> This is what " +
+      "<code>./.venv/bin/python " + PyExercise.escapeHtml(report.source) + "</code> prints, run the same way you run it."));
+    if (out.stdout.trim()) {
+      box.appendChild(h("div", "console-out", PyExercise.escapeHtml(out.stdout)));
+    }
+    if (out.stderr) {
+      box.appendChild(h("div", "demo-fail", out.timed_out
+        ? "✗ it did not finish within 20 seconds"
+        : "✗ it stopped with exit code " + out.returncode));
+      box.appendChild(h("div", "console-out", PyExercise.escapeHtml(out.stderr)));
+    }
+    if (out.truncated) box.appendChild(h("div", "helpers", "(the output was truncated)"));
+    return box;
   }
 
   function render(report, spec, host, feedback, status) {
@@ -98,6 +120,9 @@ window.PyExercise = (function () {
       }
       feedback.appendChild(box);
     });
+
+    var demo = demoBlock(report);
+    if (demo) feedback.appendChild(demo);
 
     var stamp = new Date().toLocaleTimeString();
     feedback.appendChild(h("div", "pyex-stamp", "checked " + stamp + " · " + report.source));
@@ -175,7 +200,7 @@ window.PyExercise = (function () {
         solutionBox.textContent =
           "./bin/grade " + spec.lesson + " --show-solution\n\n" +
           "(that prints the reference implementation; it is also at exercises/solutions/" +
-          spec.lesson + "_attention.py)";
+          spec.file.split("/").pop() + ")";
         solutionBox.style.display = "block";
       } else {
         solutionBox.style.display = "none";

@@ -24,6 +24,15 @@ All three reachable and checked 2026-10-21. These support the code loop rather t
 - [PyTorch docs — `torch.matmul`](https://docs.pytorch.org/docs/stable/generated/torch.matmul.html)
   The exact broadcasting rules for leading axes: which dimensions must match, which broadcast, what the result shape is. **Use for:** any shape question about `(B, H, T, d)` tensors. Claims used in lesson 00 were run against this workspace's torch 2.14.1 on 2026-10-21: `(2,3) @ (3,2) → (2,2)`; `(2,4,8) @ (2,8,4) → (2,4,4)`; 1-D `@` 1-D → a 0-dim tensor; a mismatch reads `mat1 and mat2 shapes cannot be multiplied (2x3 and 2x3)`; `.T` on a 3-D tensor reverses _all_ axes and now emits a deprecation warning — `transpose(-2, -1)` is the correct spelling.
 
+### Multi-head variants (verified 2026-10-21)
+
+Both fetched and checked; both are the primary papers for their idea, not summaries of it.
+
+- [Shazeer, _Fast Transformer Decoding: One Write-Head is All You Need_ (2019)](https://arxiv.org/abs/1911.02150)
+  Introduces **multi-query attention**: "the keys and values are shared across all of the different attention heads, greatly reducing the size of these tensors and hence the memory bandwidth requirements of incremental decoding." **Use for:** why K/V head counts can be smaller than query head counts, and the memory-bandwidth framing of decoding.
+- [Ainslie et al., _GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints_ (2023)](https://arxiv.org/abs/2305.13245)
+  Generalises MQA to "an intermediate (more than one, less than number of query heads) number of key-value heads", plus the uptraining recipe that converts an existing multi-head checkpoint. **Use for:** what real checkpoints actually ship, and the vocabulary (`n_kv_heads`, `enable_gqa`) the PyTorch signature uses.
+
 ### First contact / intuition
 
 - [3Blue1Brown, _Attention in transformers, step-by-step_ (Deep Learning Ch. 6)](https://www.3blue1brown.com/lessons/attention/)
@@ -38,7 +47,7 @@ All three reachable and checked 2026-10-21. These support the code loop rather t
 ### Canonical formulas (cite these, never memory)
 
 - [Vaswani et al., _Attention Is All You Need_ (2017)](https://arxiv.org/abs/1706.03762)
-  §3.2.1 defines scaled dot-product attention; footnote 4 is the scaling argument; Appendix B.1 the positional encoding. **Use for:** every formula claim in a lesson. Also on arXiv as HTML: `https://arxiv.org/html/1706.03762v7`.
+  §3.2.1 defines scaled dot-product attention; §3.2.3 is the causal mask in two sentences ("masking out (setting to −∞) all values in the input of the softmax which correspond to illegal connections"); footnote 4 is the scaling argument; Appendix B.1 the positional encoding. **Use for:** every formula claim in a lesson. Also on arXiv as HTML: `https://arxiv.org/html/1706.03762v7` (the reader here was checked against `https://ar5iv.labs.arxiv.org/html/1706.03762`, 2026-10-21).
 - [Dive into Deep Learning, §11.3 Attention Scoring Functions](https://d2l.ai/chapter_attention-mechanisms-and-transformers/attention-scoring-functions.html)
   Derives the variance argument for `1/√d` properly, contrasts dot-product and additive scoring, and shows masked softmax for padding. **Use for:** the exact reason the scale exists, when the lesson's plain-English version is not enough.
 - [Jurafsky & Martin, _Speech and Language Processing_ (3rd ed. draft), Ch. 9](https://web.stanford.edu/~jurafsky/slp3/9.pdf)
@@ -57,7 +66,7 @@ All three reachable and checked 2026-10-21. These support the code loop rather t
 - [PyTorch — `torch.einsum`](https://pytorch.org/docs/stable/generated/torch.einsum.html)
   Writing attention as an indexed equation. **Use for:** when shape bookkeeping across heads gets confusing.
 - [karpathy/nanoGPT — `model.py`](https://github.com/karpathy/nanoGPT)
-  A complete GPT in ~300 lines, attention included. **Use for:** lesson 03+, reading real model code. Karpathy now points to [nanochat](https://github.com/karpathy/nanochat) instead; nanoGPT is deprecated but remains the clearest teaching artefact.
+  A complete GPT in ~300 lines, attention included. **Use for:** lesson 03+, reading real model code; lesson 02 already quotes `CausalSelfAttention`'s `bias` buffer, `masked_fill`, and the `is_causal=True` fast path (fetched and checked 2026-10-21: `torch.tril(torch.ones(config.block_size, config.block_size)).view(1,1,bs,bs)` registered as a buffer, sliced `[:,:,:T,:T]` in `forward`). Karpathy now points to [nanochat](https://github.com/karpathy/nanochat) instead; nanoGPT is deprecated but remains the clearest teaching artefact.
 - [Karpathy, _Let's build GPT: from scratch_](https://www.youtube.com/watch?v=kCc8FmEb1nY) (and the [Zero to Hero series](https://karpathy.ai/zero-to-hero.html))
   Builds a working GPT line by line, live. **Use for:** the long watch, when a 20-minute session becomes 2 hours.
 - [PyTorch — `torch.nn.MultiheadAttention`](https://pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html)
@@ -67,10 +76,13 @@ All three reachable and checked 2026-10-21. These support the code loop rather t
 
 - `lessons/0000-matrices-for-attention.html` — dot product, matmul, transpose, the shape rule, a shape-prediction drill, and the `Q · Kᵀ` grid built from the learner's own functions. (JavaScript arrays: this is the one lesson before Python.)
 - `lessons/0001-attention-as-a-weighted-average.html` — scaled dot-product attention in PyTorch: the four steps, the Python needed, the softmax axis, why the `1/√d_k` scale exists. Its verdicts come from the local grader.
+- `lessons/0002-the-mask-and-the-scale.html` — the fifth step: the score matrix as the only control surface, why blocked cells must be `−∞` (measured: `0` leaves every blocked key a share), the causal triangle, the leak test, and `is_causal=True` in real code. Uses the same grader, plus hatched masked cells in the heatmap.
+- `lessons/0003-several-weighted-averages.html` — multi-head: the width divided into H slices, the `view`/`transpose` idiom (and the verbatim `view size is not compatible` error), what the split buys (measured: one 4-wide head vs two 2-wide heads differ by 0.0388), `W^O`, and MQA/GQA. Draws one heatmap per head, banded by head index, and shows head 0 of its example reproducing lesson 02's table exactly.
+- `HOW.md` — how the machinery works: what a lesson page is made of, the path from "you edit your file" to the numbers on the page, the checks-module contract, the report format, the checklist for adding a lesson, and the traps that have bitten.
 - `exercises/` — the learner's implementations, one file per lesson, plus `exercises/solutions/` with reference solutions.
 - `bin/` + `tools/grader/` — the loop: `bin/grade <lesson>` grades `exercises/<lesson>_*.py` against independent reference implementations with named diagnoses; `bin/grader` serves the workspace and the same report over http for the lesson pages; `bin/lesson <id>` opens a lesson through it. Checks per lesson live in `tools/grader/checks/lesson_NNNN.py`.
 - `tools/check_lessons.py` — parses every inlined lesson script and every shared asset with node, so a stray quote is caught in the terminal instead of in a browser.
-- `reference/scaled-dot-product-attention.html` — one-page sheet: four steps, shapes, the PyTorch/JS mapping, four failure modes, hand-checkable sanity tests.
+- `reference/scaled-dot-product-attention.html` — one-page sheet: five steps (masking included), shapes, the PyTorch/JS mapping, seven failure modes, hand-checkable sanity tests.
 - `reference/matrix-ops.html` — one-page sheet: the three operations, the inner-numbers rule, `Q · Kᵀ` and `weights · V`, the `.T` trap, four shape errors.
 - `reference/python-for-js-devs.html` — the syntax map, the tensor idioms, the error messages you actually hit, and the workspace's commands.
 - `reference/glossary.html` — every term this course uses, defined once; the single source of truth for vocabulary.
@@ -120,8 +132,7 @@ All verified reachable and active (2026-10-21). Every option is free. The honest
 
 Nothing verified yet for these; future research passes should fill them:
 
-- **KV cache mechanics** and why inference reuses keys/values — the mission cares about this, no single high-trust explainer confirmed.
+- **KV cache mechanics** and why inference reuses keys/values — the mission cares about this, no single high-trust explainer confirmed. (This is the next lesson's subject.)
 - **Interpretability of learned attention patterns** (attention heads as circuits, induction heads) — `transformer-circuits.pub` not yet verified in this workspace.
-- **Multi-head in practice:** how heads are split from the width, and what GQA/MQA actually save.
-- **Batched shape notation:** how `(B, H, T, d_head)` arises. The *mechanics* are now covered (d2l §2.3 and the `torch.matmul` docs, both verified 2026-10-21); what is still missing is a high-trust source that derives the head axis from a real model's weight split.
+- **Batched shape notation:** the *mechanics* are covered (d2l §2.3, `torch.matmul` docs, and now nanoGPT's `view(B, T, nh, hs).transpose(1, 2)` split as the reference derivation). What is still missing is a high-trust source for the batched version of the whole block, including how GQA's `n_kv_heads` interact with the query-head axis.
 - Local/in-person options: no verified reading group or meetup confirmed for this user's location.

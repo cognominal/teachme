@@ -154,6 +154,10 @@ pre .key { color: var(--accent); font-weight: 600; }
   overflow-x: auto;
 }
 
+/* Inline annotation inside a formula block: muted comment, accented step. */
+.formula .cmt { color: var(--muted); font-size: 0.86em; }
+.formula .hl { color: var(--accent); font-weight: 650; }
+
 /* ---------- sidenotes ---------- */
 
 .sidenote {
@@ -345,6 +349,10 @@ textarea.editor.dirty { border-left: 3px solid var(--accent); }
 .pyex-part h4 .mark-ok { color: var(--ok); }
 .pyex-part h4 .mark-bad { color: var(--bad); }
 .pyex-stamp { margin-top: 0.9rem; font-family: var(--mono); font-size: 0.7rem; color: var(--muted); }
+/* The learner's own script output, as the terminal would print it. */
+.pyex-demo { margin-top: 1rem; padding-top: 0.85rem; border-top: 1px solid var(--rule); }
+.pyex-demo .console-out { margin-top: 0.5rem; max-height: 22rem; overflow: auto; }
+.pyex-demo .demo-fail { color: var(--bad); font-weight: 650; margin-top: 0.6rem; }
 
 /* ---------- attention heatmap ---------- */
 
@@ -357,10 +365,36 @@ textarea.editor.dirty { border-left: 3px solid var(--accent); }
   padding: 0.3rem 0.4rem;
   border-radius: 3px;
   min-width: 3.2rem;
-  background: color-mix(in srgb, var(--accent) calc(var(--w) * 1%), var(--paper));
+  background: color-mix(in srgb, var(--tint, var(--accent)) calc(var(--w) * 1%), var(--paper));
   color: var(--ink);
 }
 .heatmap td.head { background: none; text-align: right; color: var(--muted); font-family: var(--sans); }
+/* Masked cells: hatched and dimmed, so "blocked" is visible without reading. */
+.heatmap td.masked {
+  background: repeating-linear-gradient(45deg,
+    transparent 0 3px,
+    color-mix(in srgb, var(--muted) 22%, transparent) 3px 6px);
+  color: var(--muted);
+}
+/* The diagonal: a token's own position, always visible under a causal mask. */
+.heatmap td.self { outline: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: -1.5px; }
+/* Head bands (lesson 03): a cell can carry the index of the head its column
+   belongs to. The tint is a shade of the accent rather than a new hue, so a
+   banded grid still reads as one kind of quantity. Masked cells keep their
+   hatch: their background rule is more specific than the one reading --tint. */
+.heatmap td.h0 { --tint: var(--accent); }
+.heatmap td.h1 { --tint: color-mix(in srgb, var(--accent) 45%, var(--ink)); }
+.heatmap td.h2 { --tint: color-mix(in srgb, var(--accent) 22%, var(--ink)); }
+.heatmap td.h3 { --tint: color-mix(in srgb, var(--accent) 65%, var(--paper)); }
+.head-key {
+  font-family: var(--sans); font-size: 0.74rem; color: var(--muted);
+  display: flex; flex-wrap: wrap; gap: 0.9rem; margin: 0.5rem 0 0;
+}
+.head-key i { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 2px; margin-right: 0.3rem; }
+.head-key .swatch-h0 { background: var(--accent); }
+.head-key .swatch-h1 { background: color-mix(in srgb, var(--accent) 45%, var(--ink)); }
+.head-key .swatch-h2 { background: color-mix(in srgb, var(--accent) 22%, var(--ink)); }
+.head-key .swatch-h3 { background: color-mix(in srgb, var(--accent) 65%, var(--paper)); }
 
 /* ---------- shape explorer (assets/shape.js) ---------- */
 

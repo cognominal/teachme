@@ -47,11 +47,24 @@ def describe(value) -> str:
 
 
 def max_diff(a, b) -> float | None:
-    """Largest absolute difference, or None when the two cannot be compared."""
+    """Largest absolute difference, or None when the two cannot be compared.
+
+    Masked attention produces ±inf and, when a whole row is blocked, NaN. Those
+    cells are not "different" from the same non-finite value on the other side —
+    `(-inf) - (-inf)` is NaN, which would silently make every comparison fail —
+    so identical non-finite cells count as equal and a non-finite value on only
+    one side counts as an infinite difference."""
     ta, tb = as_tensor(a), as_tensor(b)
     if ta is None or tb is None or tuple(ta.shape) != tuple(tb.shape):
         return None
-    return (ta.double() - tb.double()).abs().max().item()
+    da, db = ta.double(), tb.double()
+    finite = torch.isfinite(da) & torch.isfinite(db)
+    if not bool(finite.all()):
+        agree = (torch.isnan(da) & torch.isnan(db)) | (da == db)
+        if not bool(agree[~finite].all()):
+            return float("inf")
+    diff = torch.where(finite, (da - db).abs(), torch.zeros_like(da))
+    return float(diff.max().item()) if diff.numel() else 0.0
 
 
 def near(a, b, atol: float = ATOL) -> bool:

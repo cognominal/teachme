@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 02 — The mask and the scale</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 02 · <a href="../MISSION.md">mission</a>: write attention from scratch and make it work</p>
+<h1>The mask and the scale</h1>
+<p class="subtitle">Two edits to one matrix — what a token may see, and how sharply it chooses.</p>
+
+<p class="lead">Lesson 01 gave you four steps and one output. This lesson adds a fifth: before the softmax, the score matrix gets edited. That single place is the whole control surface of attention — masking, biases, windows and the scale all live there. You write three short functions in <code>exercises/0002_masking.py</code> and run <code>./bin/grade 0002</code>.</p>
+
+<p class="prereq">Prerequisites: <a href="0001-attention-as-a-weighted-average.html">Lesson 01</a> — score, scale, softmax each row, mix the rows of <code>V</code>. If that page's checks pass, everything here is one new line of code. Shapes and the inner-numbers rule are <a href="0000-matrices-for-attention.html">Lesson 00</a>. New to Python? <a href="../reference/python-for-js-devs.html">The syntax map</a>.</p>
+
+<div class="note">
+  <span class="label">The one idea</span>
+  <p>Attention has exactly <strong>one</strong> place where you can change its behaviour: the (T × T) score matrix, before the softmax. Masking is not a special extra mechanism bolted onto attention — it is an edit to those numbers. Once you have that picture, a whole family of published tricks stops looking like a family.</p>
+</div>
+
+<h2>1 · Where the fifth step goes</h2>
+
+<div class="formula">scores&nbsp; = Q · K<sup>T</sup> / √d<sub>k</sub>&nbsp;&nbsp;&nbsp;<span class="cmt">← both edits happen here, on a (T × T) matrix</span><br>
+scores&nbsp; = <span class="hl">where the mask is 0: −∞</span><br>
+weights = softmax<sub>rows</sub>( scores )<br>
+output&nbsp; = weights · V</div>
+
+<ol>
+  <li><strong>Score.</strong> <code>Q @ K.transpose(-2, -1)</code> — unchanged from lesson 01.</li>
+  <li><strong>Scale.</strong> <code>/ dk ** 0.5</code> — unchanged.</li>
+  <li><strong>Block.</strong> <em>New.</em> Everywhere the mask is 0, replace the score with <code>float("-inf")</code>. <code>scores.masked_fill(mask == 0, float("-inf"))</code>.</li>
+  <li><strong>Normalise.</strong> <code>torch.softmax(scores, dim=-1)</code> — still along each row. Rows now distribute their mass over the <em>visible</em> keys only.</li>
+  <li><strong>Mix.</strong> <code>weights @ V</code> — unchanged.</li>
+</ol>
+
+<p>Order matters in exactly one place: <strong>the mask goes in before the softmax, never after</strong>. Blocking the scores first means normalising over the keys that are allowed, so every row is still a distribution summing to 1. Zeroing weights afterwards removes mass from an already-normalised row and leaves it summing to less than 1 — no longer a weighted average of anything. Whether you mask before or after multiplying by <code>1/√d<sub>k</sub></code> is irrelevant: <code>−∞ × anything</code> is still <code>−∞</code>.</p>
+
+<h2>2 · The score matrix is the whole control surface</h2>
+
+<p>Every published variation on attention is a rule about what to put in the cells of that (T × T) matrix. None of them change the matmuls.</p>
+
+<table>
+  <thead><tr><th>Edit to the scores</th><th>What it buys</th></tr></thead>
+  <tbody>
+    <tr><td><code>/ √d<sub>k</sub></code> (lesson 01)</td><td>keeps the distribution soft as the width grows, so gradients survive</td></tr>
+    <tr><td>causal mask: <code>j &gt; i</code> → −∞ (this lesson)</td><td>a token cannot read the future — what makes next-token prediction possible</td></tr>
+    <tr><td>padding mask: pad positions → −∞</td><td>variable-length batches: real tokens never mix in the filler. Same mechanism, different mask</td></tr>
+    <tr><td>sliding window: also block <code>j &lt; i − w</code></td><td>a banded matrix — local attention, cheaper and still causal</td></tr>
+    <tr><td>add a per-head distance bias (ALiBi)</td><td>position information straight into the scores, with no positional embeddings</td></tr>
+    <tr><td>one always-visible "sink" slot</td><td>somewhere harmless for a row to dump probability mass; used in streaming/quantised settings</td></tr>
+  </tbody>
+</table>
+
+<p>And there is one thing you cannot do here: nothing in this matrix lets a token read a <em>later</em> row's value. The mask is a statement about the score matrix, and the score matrix is the only door.</p>
+
+<h2>3 · Why −∞ and not 0</h2>
+
+<p>The softmax is <code>exp(score) / Σ exp(scores)</code>. So the filler you choose is really a choice of <code>exp(filler)</code> — the unnormalised mass you are handing to a token that must not be read. Here is the lesson's 4-token example, first row (<code>the</code>), with three different fillers in the six blocked cells:</p>
+
+<table>
+  <thead><tr><th>Blocked scores set to</th><th>Row 0 of the weights</th><th>Blocked cells exactly 0?</th></tr></thead>
+  <tbody>
+    <tr><td><code>float("-inf")</code> (or <code>-1e9</code>, or <code>-1e4</code>)</td><td><code>[1.000, 0, 0, 0]</code></td><td>yes — all 6 of them</td></tr>
+    <tr><td><code>0</code></td><td><code>[0.378, 0.207, 0.207, 0.207]</code></td><td>no — every blocked key keeps a share</td></tr>
+    <tr><td><code>-1</code></td><td><code>[0.623, 0.126, 0.126, 0.126]</code></td><td>no — just a smaller share</td></tr>
+  </tbody>
+</table>
+
+<p><code>exp(0) = 1</code>: filling with zero does not block anything, it <em>invites</em> every blocked token in at equal strength. <code>exp(-∞) = 0</code>: the filler has to drive the exponent below the point where float32 underflows to zero. That is why any large negative number works (<code>exp(-1e4)</code> is exactly 0 in float32) and 0 emphatically does not.</p>
+
+<p>Three consequences worth keeping:</p>
+
+<ul>
+  <li><strong>Exact zero, not nearly zero.</strong> The check in Part B tests <code>weight == 0.0</code>, not <code>&lt; 1e-6</code>. A blocked cell contributes <em>nothing</em> to <code>weights @ V</code> — the future is arithmetically absent, not merely down-weighted. That is what Part C's leak test measures: replace a later value row with something absurd and the earlier output rows do not move at all.</li>
+  <li><strong>Rows still sum to 1</strong> — the blocked mass was never in the denominator. Measured worst error over 200 random causal draws in float32: 1.2 × 10<sup>−7</sup>, the same order as lesson 01's unmasked arithmetic.</li>
+  <li><strong>A row must keep something.</strong> If every cell in a row is −∞, the softmax is <code>0/0</code> and the row becomes <code>NaN</code>. This is the padding-mask footgun: a fully-padded query position poisons the whole batch. Causal masks never do this — row <em>i</em> always keeps its own diagonal cell.</li>
+</ul>
+
+<div class="note">
+  <span class="label">Watch it go wrong</span>
+  <p>Masking <em>after</em> the softmax is the mistake that looks harmless and is not. On this page's example the four row sums become <code>[0.295, 0.524, 0.763, 1.0]</code> — the rows no longer sum to 1, so the output is a weighted sum of the values with no claim to being an average of anything. Only the last row is unaffected, because nothing was blocked in it.</p>
+</div>
+
+<h2>4 · The scale, now with numbers</h2>
+
+<p>Lesson 01 asserted that raw scores grow with <code>d<sub>k</sub></code> and saturate the softmax. You can now see it, and you can see why masking makes it worse: a masked row averages <em>fewer</em> values, so what is left of the distribution matters more. Measured in this workspace (8 tokens, random normal inputs, mean of 20 draws) — the largest weight in a row, which is 0.125 if the row is perfectly uniform:</p>
+
+<table>
+  <thead><tr><th>d<sub>k</sub></th><th>raw scores</th><th>scaled by 1/√d<sub>k</sub></th></tr></thead>
+  <tbody>
+    <tr><td>4</td><td>0.911</td><td>0.655</td></tr>
+    <tr><td>16</td><td>0.973</td><td>0.586</td></tr>
+    <tr><td>64</td><td>0.999</td><td>0.538</td></tr>
+    <tr><td>256</td><td>1.000</td><td>0.545</td></tr>
+  </tbody>
+</table>
+
+<p>At <code>d<sub>k</sub> = 64</code> an unscaled row is effectively a one-hot vector: one key takes 99.9% of the mass. <code>softmax([8, 0, −8])</code> is <code>[0.9997, 0.0003, 0.0000]</code> — run it yourself. Scaling keeps the decisive-ness roughly constant as the width grows, which is exactly what a layer you intend to train wants.</p>
+
+<h2>5 · Write it</h2>
+
+<p>Three functions in <code>exercises/0002_masking.py</code>. Part A is the triangle on its own (it is worth being able to picture it), Part B is the five steps, Part C is the two-line composition — plus one property that has nothing to do with numbers: no token may influence an earlier token's output.</p>
+
+<div id="exercise"></div>
+
+<h2>6 · Watch it work</h2>
+
+<p>The same 4 tokens as lesson 01, now with a causal mask. Run your code and the two grids below become <em>yours</em>.</p>
+
+<div class="controls">
+  <button class="btn btn--primary" id="recompute">Re-check and redraw</button>
+</div>
+<div id="watch"></div>
+
+<h2>7 · The same thing in production</h2>
+
+<p>Real code does not build the triangle by hand. <code>F.scaled_dot_product_attention</code> takes the intent as a flag:</p>
+
+<pre><code>import torch.nn.functional as F
+
+out = F.scaled_dot_product_attention(Q, K, V, is_causal=True)   # <span class="cmt">the kernel applies the −∞ triangle itself</span></code></pre>
+
+<p>Checked, not asserted: in this workspace your five lines and that flag agree to within 3.6 × 10<sup>−7</sup> in float32 across <code>T</code> = 1 … 17 (bit-identical in float64), and Part C of the checks compares your code against the kernel on every run.</p>
+
+<p>This is the lesson where attention stops being a formula on a page and becomes the thing in <code>model.py</code>. Here is <a href="https://github.com/karpathy/nanoGPT">nanoGPT</a>'s <code>CausalSelfAttention</code>, unedited, minus the head reshaping that lesson 03 covers:</p>
+
+<pre><code># in __init__: one triangle for the whole model, not a learned parameter
+self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
+                            .view(1, 1, config.block_size, config.block_size))
+
+# in forward:
+att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+att = F.softmax(att, dim=-1)
+att = self.attn_dropout(att)
+y = att @ v
+
+# ...or, on a GPU:
+y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None,
+        dropout_p=self.dropout if self.training else 0, is_causal=True)</code></pre>
+
+<p>Three things to notice, each of which you can now read rather than guess:</p>
+
+<ul>
+  <li>The mask is a <strong>buffer</strong>: <code>torch.tril(torch.ones(...))</code>, registered once, sliced with <code>[:,:,:T,:T]</code> so it works for any sequence length up to <code>block_size</code>. It is not learned — it is the answer to "what is allowed", and that is a fact about the task, not a weight.</li>
+  <li>The order is exactly this lesson's order: scale, mask, softmax, mix.</li>
+  <li>The fused path replaces all five lines with one flag. When <code>is_causal=True</code> is available, the kernel never materialises the (T × T) triangle at all — and notice that nanoGPT's flash branch passes <code>attn_mask=None</code>, because the flag <em>is</em> the mask.</li>
+</ul>
+
+<p>Why does a language model need this at all? Because training feeds it the whole sequence and asks for the next token at <em>every</em> position simultaneously. Position <em>i</em> must predict token <em>i+1</em> without having seen it — otherwise the answer is already in the input, and the model learns nothing. Masking makes one forward pass give T honest predictions. It is also why generation can be cached: if a token can never look forward, the keys and values it looked at cannot change later (that is the KV-cache lesson).</p>
+
+<h2>8 · Check what stuck</h2>
+
+<p>Answer from memory. Every option is the same length on purpose — no formatting hints.</p>
+
+<div id="quiz"></div>
+
+<div class="note">
+  <span class="label">Do this before you close the tab</span>
+  <p>Write the five steps on one line each, from memory, in order: <em>score, scale, block, softmax, mix</em>. Then say out loud why the blocked cells must be −∞ rather than 0. Tomorrow, without opening this page: delete all three function bodies in <code>exercises/0002_masking.py</code> and write them again, then run <code>./bin/grade 0002</code>.</p>
+</div>
+
+<div class="source">
+  <span class="label">Primary source · read this next (10 min)</span>
+  <p><a href="https://arxiv.org/abs/1706.03762">Vaswani et al., <em>Attention Is All You Need</em> (2017)</a> — read <strong>§3.2.3 "Applications of Attention in our Model"</strong>. Two sentences of it are this whole lesson: <em>"We need to prevent leftward information flow in the decoder to preserve the auto-regressive property. We implement this inside of scaled dot-product attention by masking out (setting to −∞) all values in the input of the softmax which correspond to illegal connections."</em> That is the mechanism you just wrote, in the authors' words.</p>
+  <p>Then read the real thing: <a href="https://github.com/karpathy/nanoGPT/blob/master/model.py"><code>karpathy/nanoGPT</code>, <code>model.py</code></a>, the <code>CausalSelfAttention</code> class — the code quoted above, in context, with the head reshaping around it. Read it twice: once for the attention, once for the shapes.</p>
+</div>
+
+<div class="source">
+  <span class="label">Keep for later</span>
+  <p><a href="https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html">PyTorch — <code>scaled_dot_product_attention</code></a> — the exact hand-written equivalent, the mask/boolean polarity, <code>is_causal</code>, and GQA. The reference for what production calls.</p>
+  <p><a href="../reference/scaled-dot-product-attention.html">Reference sheet: scaled dot-product attention</a> — now with the masking step — and <a href="../reference/python-for-js-devs.html">Python for JS/Perl/C developers</a>.</p>
+  <p><a href="../reference/glossary.html">Glossary</a> — every term this course uses, defined once.</p>
+</div>
+
+<footer class="lesson-foot">
+  <p><strong>Ask your teacher.</strong> I'm your agent in this workspace — ask me anything this page glossed over: how a padding mask has to be built from a batch of uneven sequences, what a sliding-window or ALiBi mask looks like in code, why the fused kernel can skip the triangle entirely, what changes when there are several heads (that's lesson 03), how the KV cache follows from causality, or to check your mental model of shapes.</p>
+  <p>Next lesson: <a href="0003-several-weighted-averages.html">several weighted averages at once</a> — the same steps, H times, over slices of the width.</p>
+</footer>
+
+<script src="../assets/matrix-view.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/pyexercise.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  /* Reference numbers for §6, computed in this workspace with torch 2.14.1
+     (float32) on the same tensors the learner's file uses. They are only drawn
+     when the learner's own code cannot produce numbers yet. */
+  var V = [
+    [0.1, 0.1, 0.1],
+    [1.0, 0.2, 0.0],
+    [0.0, 0.6, 0.4],
+    [0.2, 0.2, 0.6]
+  ];
+  var REFERENCE = {
+    mask: [
+      [1, 0, 0, 0],
+      [1, 1, 0, 0],
+      [1, 1, 1, 0],
+      [1, 1, 1, 1]
+    ],
+    weights: [
+      [1.0000, 0.0000, 0.0000, 0.0000],
+      [0.4023, 0.5977, 0.0000, 0.0000],
+      [0.3147, 0.3524, 0.3330, 0.0000],
+      [0.1938, 0.3412, 0.2571, 0.2080]
+    ],
+    output: [
+      [0.1000, 0.1000, 0.1000],
+      [0.6379, 0.1598, 0.0402],
+      [0.3838, 0.3017, 0.1647],
+      [0.4021, 0.2835, 0.2470]
+    ],
+    /* lesson 01's numbers: the same tokens with no mask at all */
+    unmasked: [
+      [0.2810, 0.2674, 0.2847],
+      [0.3782, 0.2818, 0.2551],
+      [0.3403, 0.2776, 0.2677],
+      [0.4021, 0.2835, 0.2470]
+    ]
+  };
+
+  var watch = document.getElementById("watch");
+
+  function pick(figure, fallback, what) {
+    if (figure && figure.source === "learner" && figure.values) {
+      return { values: figure.values, source: "your code", error: null };
+    }
+    return {
+      values: fallback,
+      source: "the reference values stored on this page",
+      error: (figure && figure.error) || (figure && figure.source === "absent"
+        ? what + " is not defined in your file" : null)
+    };
+  }
+
+  function rowFixed(row) {
+    return "[ " + row.map(function (x) { return x.toFixed(2); }).join(", ") + " ]";
+  }
+
+  function visibleWeights(row, tokens, i) {
+    var parts = [];
+    for (var j = 0; j <= i; j++) {
+      parts.push(tokens[j] + " " + row[j].toFixed(2));
+    }
+    return parts.join("  ·  ");
+  }
+
+  function sameRow(a, b) {
+    if (!a || !b || a.length !== b.length) return false;
+    for (var k = 0; k < a.length; k++) {
+      if (Math.abs(a[k] - b[k]) > 1e-5) return false;
+    }
+    return true;
+  }
+
+  function draw(figures) {
+    var tokens = (figures && figures.tokens) || ["the", "trophy", "fit", "it"];
+    var dk = (figures && figures.dk) || 2;
+    var mask = pick(figures && figures.mask, REFERENCE.mask, "causal_mask()");
+    var weights = pick(figures && figures.weights, REFERENCE.weights, "masked_weights()");
+    var output = pick(figures && figures.output, REFERENCE.output, "causal_attention()");
+
+    var html = "";
+
+    html += '<figure><figcaption>The mask itself — <code>' + (mask.source === "your code" ? "your" : "the reference") +
+      ' causal_mask(' + tokens.length + ')</code>. 1 means "this query may look at that key"; ' +
+      'a token always keeps its own position (outlined).</figcaption>';
+    html += MatrixView.heatmap(mask.values, {
+      rowLabels: tokens,
+      colLabels: tokens,
+      digits: 0,
+      intensityMax: 1,
+      corner: "mask",
+      cellClass: function (v, i, j) { return v ? (i === j ? "self" : null) : "masked"; }
+    });
+    html += "</figure>";
+
+    if (mask.error) {
+      html += '<div class="console-out">your causal_mask() raised: ' + MatrixView.escapeHtml(mask.error) + "</div>";
+    }
+
+    html += '<figure><figcaption>Attention weights after masking — ' +
+      (weights.source === "your code"
+        ? "computed by <strong>your</strong> <code>masked_weights()</code>, using the reference triangle"
+        : "the <strong>reference</strong> values, because your code cannot produce numbers yet") +
+      '. Hatched cells are blocked: exactly 0, drawn as 0. Every row still sums to 1 over its ' +
+      'visible keys.</figcaption>';
+    html += MatrixView.heatmap(weights.values, {
+      rowLabels: tokens,
+      colLabels: tokens,
+      digits: 2,
+      intensityMax: 1,
+      corner: "Q @ K.T",
+      cellText: function (v, i, j) { return i < j ? "0" : v.toFixed(2); },
+      cellClass: function (v, i, j) { return i < j ? "masked" : (i === j ? "self" : null); }
+    });
+    html += "</figure>";
+
+    if (weights.error) {
+      html += '<div class="console-out">your masked_weights() raised: ' + MatrixView.escapeHtml(weights.error) + "</div>";
+    }
+
+    var row0IsValue = sameRow(output.values[0], V[0]);
+
+    html += "<h3>What each token now carries</h3>";
+    html += "<table><thead><tr><th>token</th><th>may mix only these keys</th>" +
+      "<th>causal output (dv = " + (output.values[0] ? output.values[0].length : 3) + ")</th>" +
+      "<th>same row without the mask</th></tr></thead><tbody>";
+    tokens.forEach(function (token, i) {
+      html += "<tr><td><code>" + token + "</code></td><td>" + visibleWeights(weights.values[i], tokens, i) + "</td>" +
+        "<td><code>" + rowFixed(output.values[i]) + "</code></td>" +
+        "<td><code>" + rowFixed(REFERENCE.unmasked[i]) + "</code></td></tr>";
+    });
+    html += "</tbody></table>";
+
+    html += '<p class="helpers">The weights above: ' + (weights.source === "your code" ? "your code" : weights.source) +
+      ". The output vectors: " + (output.source === "your code" ? "your code" : output.source) +
+      ". The last column is lesson 01's numbers at the same row — reference values, no mask.</p>";
+
+    html += '<p class="helpers">' +
+      (row0IsValue
+        ? "<strong>Row <code>the</code> is exactly <code>V[0]</code></strong>: with only itself visible there is nothing to average. "
+        : "Row <code>the</code> should come out as exactly <code>V[0]</code> = <code>[0.10, 0.10, 0.10]</code>. ") +
+      "Row <code>it</code> is the last token, so masking changes nothing for it — it never had anything after it to look at. " +
+      "Early rows change the most, which is exactly why a causal model's first tokens are the ones that carry the least context.</p>";
+
+    watch.innerHTML = html;
+  }
+
+  var runner = PyExercise.mount(document.getElementById("exercise"), {
+    lesson: "0002",
+    file: "exercises/0002_masking.py",
+    page: "lessons/0002-the-mask-and-the-scale.html",
+    heading: "Your implementation",
+    intro: "<p>Three stubs, the five steps in comments, and an example block that checks two properties " +
+           "for you in the terminal: <code>./.venv/bin/python exercises/0002_masking.py</code> — row 0 must be " +
+           "exactly <code>V[0]</code>, and replacing the last value row must not move the first three output rows.</p>",
+    onResult: function (report) { draw(report.figures); }
+  });
+
+  document.getElementById("recompute").addEventListener("click", function () { runner.grade(); });
+  draw(null);
+
+  /* ---------- retrieval practice ---------- */
+  Quiz.mount(document.getElementById("quiz"), {
+    title: "Retrieval practice",
+    items: [
+      {
+        q: "Why set the blocked scores to −∞ rather than to 0 before the softmax?",
+        options: [
+          { text: "a zero score would make the softmax unstable" },
+          { text: "exp(0) = 1 would give them a real share of the row", correct: true },
+          { text: "a zero score cannot be masked by masked_fill at all" },
+          { text: "a zero score would leave the row's sum too large" }
+        ],
+        explain: "The softmax exponentiates, so the filler is really a choice of <code>exp(filler)</code>. <code>exp(0) = 1</code> hands every blocked token a full unit of mass and the mask does nothing; <code>exp(−∞) = 0</code> removes it exactly. A large negative number such as <code>−1e9</code> works for the same reason: float32 underflows it to exactly 0."
+      },
+      {
+        q: "Where in the pipeline does the mask have to be applied?",
+        options: [
+          { text: "to the weights, after the row normalisation" },
+          { text: "to the queries, before the query-key dot product" },
+          { text: "to the scores, before the row normalisation", correct: true },
+          { text: "to the values, before the final mixing step" }
+        ],
+        explain: "Masking before the softmax means the row is normalised over the keys it is allowed to use, so it still sums to 1. Zeroing weights afterwards leaves a row summing to less than 1 — measured on this page's example: <code>[0.295, 0.524, 0.763, 1.0]</code>."
+      },
+      {
+        q: "With a causal mask, what is row <em>i</em> of the weight matrix?",
+        options: [
+          { text: "a distribution over keys 0..i, zeros after that", correct: true },
+          { text: "a distribution over all keys, slightly reweighted" },
+          { text: "a one-hot vector pointing at key zero always" },
+          { text: "a distribution over keys i..T-1 only, zeros before" }
+        ],
+        explain: "Position <em>i</em> may look at itself and everything before it, and at nothing after: the row is a distribution over keys 0…<em>i</em> and exactly 0 for <em>j</em> &gt; <em>i</em>. Row 0 is the degenerate case — one visible key, so weight 1, so the output is exactly <code>V[0]</code>."
+      },
+      {
+        q: "What does <code>is_causal=True</code> tell the fused kernel?",
+        options: [
+          { text: "that only the upper triangle may be attended" },
+          { text: "that the mask is applied after the softmax too" },
+          { text: "that the batch has no padding rows present" },
+          { text: "that only the lower triangle may be attended", correct: true }
+        ],
+        explain: "It is the <code>−∞</code> triangle, expressed as intent instead of as a tensor — so the kernel never builds the (T × T) mask at all. That is why nanoGPT's flash branch passes <code>attn_mask=None</code> alongside <code>is_causal=True</code>."
+      },
+      {
+        q: "From memory: which torch method replaces the blocked scores with −∞?",
+        type: "recall",
+        placeholder: "the method and what it fills",
+        accept: [
+          /masked_fill[\s\S]{0,60}(-inf|negative|neg_inf|float\(["']-inf)/i,
+          /masked_fill/i,
+          /where\([\s\S]{0,80}(-inf|float\(["']-inf)/i,
+          /\[[\s\S]{0,30}mask[\s\S]{0,30}\][\s\S]{0,20}=[\s\S]{0,10}(-inf|float\(["']-inf)/i
+        ],
+        explain: "<code>scores.masked_fill(mask == 0, float(\"-inf\"))</code> — or <code>torch.where(mask == 0, float(\"-inf\"), scores)</code>, which is the same edit without the in-place flavour. If you had to think, that is fine: come back to this question tomorrow."
+      }
+    ]
+  });
+})();
+</script>
+</body>
+</html>

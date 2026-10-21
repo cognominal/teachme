@@ -159,7 +159,7 @@ out = F.scaled_dot_product_attention(Q, K, V)   # <span class="cmt">is_causal=Fa
 
 <footer class="lesson-foot">
   <p><strong>Ask your teacher.</strong> I'm your agent in this workspace — ask me anything this page glossed over: why <code>softmax</code> and not something else, how the three projections are learned, what changes for a batch of 32 sequences, where the causal mask goes (that's lesson 02), how to read the traceback when your code raises, or to check your mental model of shapes.</p>
-  <p>Next lesson: the mask and the scale — what changes when a token must not look ahead.</p>
+  <p>Next lesson: <a href="0002-the-mask-and-the-scale.html">the mask and the scale</a> — what changes when a token must not look ahead.</p>
 </footer>
 
 <script src="../assets/matrix-view.js"></script>
@@ -268,9 +268,9 @@ out = F.scaled_dot_product_attention(Q, K, V)   # <span class="cmt">is_causal=Fa
       {
         q: "In <code>torch.softmax(scores, dim=-1)</code>, what does <code>dim=-1</code> do?",
         options: [
-          { text: "Each row becomes a distribution over keys", correct: true },
           { text: "Each column becomes a distribution over keys" },
           { text: "Each tensor becomes a single probability pair" },
+          { text: "Each row becomes a distribution over keys", correct: true },
           { text: "Each step divides the scores by the key width" }
         ],
         explain: "<code>-1</code> is the last axis, and here the last axis runs across the keys — so every row is normalised on its own. Getting it wrong is the single most common attention bug: you get columns summing to 1 and rows that do not."
@@ -278,8 +278,8 @@ out = F.scaled_dot_product_attention(Q, K, V)   # <span class="cmt">is_causal=Fa
       {
         q: "Why divide the scores by √d<sub>k</sub> before the softmax?",
         options: [
-          { text: "To keep the softmax gradients from vanishing", correct: true },
           { text: "To make all the weights perfectly uniform" },
+          { text: "To keep the softmax gradients from vanishing", correct: true },
           { text: "To shrink the length of every key vector" },
           { text: "To centre each query's raw dot products" }
         ],
@@ -288,10 +288,10 @@ out = F.scaled_dot_product_attention(Q, K, V)   # <span class="cmt">is_causal=Fa
       {
         q: "<code>scores = Q @ K.transpose(-2, -1)</code> is a (T, T) tensor. What does one cell hold?",
         options: [
-          { text: "The similarity of one query and key", correct: true },
           { text: "The attention weight of one query and key" },
           { text: "The mixture of one query and one value" },
-          { text: "The sum of one query and one key vector" }
+          { text: "The sum of one query and one key vector" },
+          { text: "The similarity of one query and key", correct: true }
         ],
         explain: "An unnormalised score: the dot product of one query row with one key row. A <em>weight</em> only exists once the whole row has been through softmax — that is what forces the row to sum to 1."
       },

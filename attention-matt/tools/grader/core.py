@@ -11,6 +11,7 @@ is a file in `exercises/`, named by the lesson's spec.
 from __future__ import annotations
 
 import importlib
+import subprocess
 import sys
 import traceback
 from dataclasses import dataclass, field
@@ -29,6 +30,18 @@ LESSONS: dict[str, dict[str, Any]] = {
         "source": "exercises/0001_attention.py",
         "checks": "checks.lesson_0001",
         "solution": "exercises/solutions/0001_attention.py",
+    },
+    "0002": {
+        "title": "The mask and the scale",
+        "source": "exercises/0002_masking.py",
+        "checks": "checks.lesson_0002",
+        "solution": "exercises/solutions/0002_masking.py",
+    },
+    "0003": {
+        "title": "Several weighted averages at once",
+        "source": "exercises/0003_multihead.py",
+        "checks": "checks.lesson_0003",
+        "solution": "exercises/solutions/0003_multihead.py",
     },
 }
 
@@ -112,7 +125,64 @@ def _safe(fn: Callable[[], Any]) -> tuple[bool, Any]:
         return False, exc
 
 
-def grade(lesson_id: str, figures: bool = True, source: Path | None = None) -> dict[str, Any]:
+DEMO_TIMEOUT = 20.0
+DEMO_STDOUT_LIMIT = 6000
+DEMO_STDERR_LIMIT = 2000
+
+
+def run_learner_demo(path: Path) -> dict[str, Any]:
+    """Run the learner's file the way *they* run it — as a script — and capture what it prints.
+
+    The checks import the file (so a demo block guarded by `__main__` never fires);
+    this runs it, which is what makes the page able to show the same table the
+    terminal shows. The only path involved is the one the lesson named, so the
+    trust boundary is unchanged: nothing that arrived over the network is executed.
+    """
+    empty = {"stdout": "", "stderr": "", "returncode": None, "timed_out": False, "truncated": False}
+    if not path.exists():
+        return empty
+
+    timed_out = False
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(path)],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=DEMO_TIMEOUT,
+        )
+        stdout, stderr, code = proc.stdout, proc.stderr, proc.returncode
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        stdout = _as_text(exc.stdout)
+        stderr = _as_text(exc.stderr)
+        code = None
+    except OSError as exc:  # no interpreter, no permission, ...
+        return {**empty, "stderr": f"{type(exc).__name__}: {exc}", "returncode": None}
+
+    truncated = len(stdout) > DEMO_STDOUT_LIMIT
+    if truncated:
+        stdout = stdout[:DEMO_STDOUT_LIMIT] + "\n… (output truncated)\n"
+    return {
+        "stdout": stdout,
+        "stderr": _fallback(stderr, DEMO_STDERR_LIMIT),
+        "returncode": code,
+        "timed_out": timed_out,
+        "truncated": truncated,
+    }
+
+
+def _as_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return value.decode(errors="replace") if isinstance(value, bytes) else str(value)
+
+
+def _fallback(text, limit: int) -> str:
+    return text if len(text) <= limit else text[-limit:]
+
+
+def grade(lesson_id: str, figures: bool = True, source: Path | None = None, demo: bool = True) -> dict[str, Any]:
     """Grade one lesson and return a JSON-able report."""
     spec = LESSONS.get(lesson_id)
     if spec is None:
@@ -126,6 +196,7 @@ def grade(lesson_id: str, figures: bool = True, source: Path | None = None) -> d
         "error": None,
         "parts": [],
         "figures": None,
+        "output": run_learner_demo(source_path) if demo else None,
     }
 
     namespace, error = run_learner_source(source_path)

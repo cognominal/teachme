@@ -65,8 +65,15 @@
     <tr><td><strong>scale</strong></td><td>Dividing scores by <code>√d<sub>k</sub></code> before softmax, to hold the spread near 1.</td></tr>
     <tr><td><strong>d<sub>k</sub></strong> / <strong>d<sub>v</sub></strong></td><td>Width of a query/key vector; width of a value vector. They can differ; the output is <code>(T × d<sub>v</sub>)</code>.</td></tr>
     <tr><td><strong>T</strong> (context length)</td><td>Number of tokens. <code>Q.length</code>, <code>scores.shape[-1]</code>.</td></tr>
-    <tr><td><strong>causal mask</strong></td><td>Making token <em>i</em> unable to see tokens after it: disallowed score cells are set to −∞ before softmax, which gives them weight exactly 0. <em>Later</em> (lesson 02).</td></tr>
-    <tr><td><strong>head</strong></td><td>One independent attention computed over a slice of the width; several run in parallel and are concatenated. <em>Later</em> (lesson 03).</td></tr>
+    <tr><td><strong>causal mask</strong></td><td>Making token <em>i</em> unable to see tokens after it: disallowed score cells are set to −∞ before softmax, which gives them weight exactly 0. <em>Taught</em> in lesson 02; built in code as <code>torch.tril(torch.ones(T, T))</code>.</td></tr>
+    <tr><td><strong>mask</strong></td><td>A (T × T) tensor of 0s and 1s given to attention: 1 = this query may look at that key, 0 = it may not. Edited into the scores; it is not a weight the model learns.</td></tr>
+    <tr><td><strong>masked_fill</strong></td><td><code>scores.masked_fill(mask == 0, float("-inf"))</code> — the line that applies a mask. The filler must be negative enough that <code>exp</code> underflows to exactly 0; <code>0</code> itself would invite the blocked keys in.</td></tr>
+    <tr><td><strong>autoregressive</strong></td><td>Predicting each token from the ones before it. The causal mask is what makes one forward pass over a whole sequence give T such predictions at once, and what makes the KV cache valid later.</td></tr>
+    <tr><td><strong>is_causal</strong></td><td>The flag that asks a fused kernel (<code>F.scaled_dot_product_attention</code>) to apply the causal triangle itself, so the (T × T) mask is never built. <code>is_causal=True</code> is the causal mask expressed as intent.</td></tr>
+    <tr><td><strong>head</strong></td><td>One independent attention computed over a slice of the width; H of them run in parallel and their outputs are concatenated. <em>Taught</em> in lesson 03: <code>x.view(T, H, dh).transpose(0, 1)</code>.</td></tr>
+    <tr><td><strong>d_head</strong> (dh)</td><td>The width of one head, <code>C / n_head</code>. It is the divisor in that head's <code>1/√d_head</code> scale — not the full width C, which would over-flatten every head.</td></tr>
+    <tr><td><strong>W<sup>O</sup></strong> (output projection)</td><td>The learned (C × C) matrix applied to the concatenated heads (<code>Concat(head₁…head_h)W<sup>O</sup></code>). Without it a head can only ever write into its own columns; with it, heads influence each other's downstream contribution.</td></tr>
+    <tr><td><strong>MQA / GQA</strong></td><td>Multi-query and grouped-query attention: fewer key/value heads than query heads, so the cache that generation reloads every step is smaller. MQA shares one K/V head; GQA shares one per group. <em>Ran into</em> in lesson 03.</td></tr>
     <tr><td><strong>KV cache</strong></td><td>Keys and values remembered from earlier steps so generation does not recompute them. <em>Later</em>.</td></tr>
   </tbody>
 </table>

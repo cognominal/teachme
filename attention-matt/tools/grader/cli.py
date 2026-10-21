@@ -81,14 +81,43 @@ def render(report: dict, colour: bool = True) -> str:
         if part.get("diagnosis"):
             out.append(f"  {bad('most likely cause')} {plain(part['diagnosis'])}")
 
+    output = report.get("output")
+    if output and (output.get("stdout") or output.get("stderr")):
+        out.append("")
+        out.append(bold("Your file's own output"))
+        out.append(dim(f"  $ ./.venv/bin/python {report.get('source', '')}"))
+        for line in output["stdout"].rstrip("\n").splitlines():
+            out.append("  " + line)
+        if not output["stdout"].strip() and not output["stderr"]:
+            out.append(dim("  (it printed nothing)"))
+        if output["stderr"]:
+            if output.get("timed_out"):
+                out.append(bad("  ✗ it did not finish within 20 seconds"))
+            else:
+                out.append(bad(f"  ✗ it stopped with exit code {output.get('returncode')}"))
+            for line in output["stderr"].rstrip("\n").splitlines():
+                out.append(dim("  " + line))
+        if output.get("truncated"):
+            out.append(dim("  (stdout truncated)"))
+
     passed = [p for p in report["parts"] if p["passed"]]
     out.append("")
     if report["parts"] and len(passed) == len(report["parts"]):
-        out.append(ok("all parts pass ✓  — next: lesson 02"))
+        out.append(ok("all parts pass ✓" + next_hint(report["lesson"])))
     else:
         out.append(bad(f"{len(report['parts']) - len(passed)} of {len(report['parts'])} parts still failing"))
     out.append(dim("(the same verdicts appear on the lesson page when ./bin/grader is running)"))
     return "\n".join(out)
+
+
+def next_hint(lesson: str) -> str:
+    """Point at the next lesson written so far, without naming one that is not there."""
+    order = list(core.LESSONS)
+    if lesson in order:
+        following = order[order.index(lesson) + 1:]
+        if following:
+            return f"  — next: lesson {following[0]}"
+    return "  — that is the last lesson written so far"
 
 
 def main(argv: list[str] | None = None) -> int:

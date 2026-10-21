@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 03 — Several weighted averages at once</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+
+<p class="kicker">Lesson 03 · <a href="../MISSION.md">mission</a>: write attention from scratch and make it work</p>
+<h1>Several weighted averages at once</h1>
+<p class="subtitle">Heads: the width is divided, not copied. And the only new skill is shape bookkeeping.</p>
+
+<p class="lead">Lesson 02 left you with one (T × T) score matrix per layer. A real model has H of them, each computed over a slice of the width, then concatenated back together. That is the whole of multi-head attention — nothing in the score, the scale, the mask or the softmax changes. You write four short functions in <code>exercises/0003_multihead.py</code> and run <code>./bin/grade 0003</code>.</p>
+
+<p class="prereq">Prerequisites: <a href="0001-attention-as-a-weighted-average.html">Lesson 01</a> (the four steps) and <a href="0002-the-mask-and-the-scale.html">Lesson 02</a> (the mask). This lesson re-uses both, once per head. Shape intuition is <a href="0000-matrices-for-attention.html">Lesson 00</a>; Python cramming is <a href="../reference/python-for-js-devs.html">the crib sheet</a>.</p>
+
+<div class="note">
+  <span class="label">The one idea</span>
+  <p>A head is not a new mechanism. It is <strong>the thing you already wrote, on a narrower slice of the width</strong>, and it costs no more than the single wide version because each head's dot products are over <code>C/H</code> numbers instead of <code>C</code>. The paper's own summary of why anybody bothers: <em>"Multi-head attention allows the model to jointly attend to information from different representation subspaces at different positions. With a single attention head, averaging inhibits this."</em></p>
+</div>
+
+<h2>1 · What changes, and what does not</h2>
+
+<table>
+  <thead><tr><th>Unchanged</th><th>New</th></tr></thead>
+  <tbody>
+    <tr><td>score, scale, mask, softmax, mix — per head, exactly lesson 02</td><td>the width is <em>divided</em>: head h gets columns h·d<sub>h</sub> … (h+1)·d<sub>h</sub>−1</td></tr>
+    <tr><td>the causal mask — one triangle, shared by every head</td><td>heads become a leading axis: H separate (T × T) matrices in one tensor</td></tr>
+    <tr><td>each row still sums to 1</td><td>the H outputs are concatenated back to (T × C) at the end</td></tr>
+    <tr><td>blocked cells are still exactly 0</td><td>real models then mix the concatenation with a learned <code>W<sup>O</sup></code> (see §6)</td></tr>
+  </tbody>
+</table>
+
+<p>The shapes, in the order you will meet them. <em>T</em> tokens, width <em>C</em>, <em>H</em> heads, head width <code>dh = C / H</code>:</p>
+
+<table>
+  <thead><tr><th>Step</th><th>Shape</th><th>What it means</th></tr></thead>
+  <tbody>
+    <tr><td>input</td><td>(T, C)</td><td>one row per token, the full width</td></tr>
+    <tr><td><code>x.view(T, H, dh)</code></td><td>(T, H, dh)</td><td>the width splits into H contiguous blocks, in place</td></tr>
+    <tr><td><code>.transpose(0, 1)</code></td><td>(<strong>H</strong>, T, dh)</td><td>heads move to the front — now <code>[h]</code> is one head's tensor</td></tr>
+    <tr><td><code>Qh @ Kh.transpose(-2, -1)</code></td><td>(H, T, T)</td><td>H score matrices; the batched matmul leaves the head axis alone</td></tr>
+    <tr><td><code>weights @ Vh</code></td><td>(H, T, dh)</td><td>H weighted averages, side by side</td></tr>
+    <tr><td>merge</td><td>(T, C)</td><td>heads put back in order: column h·dh starts head h</td></tr>
+  </tbody>
+</table>
+
+<h2>2 · The whole trick is one reshape</h2>
+
+<p>Every multi-head bug you will ever write is a shape bug. The split is two operations, and they do different jobs:</p>
+
+<pre><code>dh = C // n_head
+heads = x.view(T, n_head, dh)      # <span class="cmt">(T, C) -> (T, H, dh): the width divides, nothing moves in memory</span>
+heads = heads.transpose(0, 1)      # <span class="cmt">(T, H, dh) -> (H, T, dh): heads become a leading axis</span></code></pre>
+
+<p>Why does the order matter? Because a (T, C) tensor's <em>first</em> axis is tokens. <code>view(T, H, dh)</code> re-reads the flat row of C numbers as H blocks of dh — that is the split. Only then is it meaningful to move the head axis to the front. The reverse merge is the same two steps backwards:</p>
+
+<pre><code>merged = heads.transpose(0, 1).reshape(T, n_head * dh)   # <span class="cmt">(H, T, dh) -> (T, H*dh) = (T, C)</span></code></pre>
+
+<p>Note <code>.reshape</code> rather than <code>.view</code> in that line. <code>.view</code> demands that the memory layout already matches the shape you ask for, and a transpose does not move anything — so this is the second-most-common error message in attention code:</p>
+
+<div class="console-out">RuntimeError: view size is not compatible with input tensor's size and stride (at least one dimension spans across two contiguous subspaces). Use .reshape(...) instead.</div>
+
+<p>The message names the fix. <code>.reshape</code> copies if it has to; <code>.contiguous().view(...)</code> says the same thing out loud. (Whether <code>.view</code> raises depends on the strides — sometimes the two happen to line up — so a working <code>.view</code> proves nothing about your next reshape.)</p>
+
+<p>This is exactly how the real thing is written. From <a href="https://github.com/karpathy/nanoGPT/blob/master/model.py">nanoGPT's <code>CausalSelfAttention</code></a>, one line per role:</p>
+
+<pre><code>q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
+k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # <span class="cmt">(B, nh, T, hs)</span>
+q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # <span class="cmt">(B, nh, T, hs)</span>
+v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # <span class="cmt">(B, nh, T, hs)</span>
+...
+y = y.transpose(1, 2).contiguous().view(B, T, C)  # <span class="cmt">re-assemble all head outputs side by side</span></code></pre>
+
+<p>Same idiom, one extra axis: a batch of <em>B</em> sequences is a leading axis, so the heads go at position 1 instead of 0. On this page <em>B</em> = 1 and the batch axis is invisible — which is why the exercise works on plain (T, C) tensors.</p>
+
+<h2>3 · What the division buys</h2>
+
+<p>Multi-head is not "more attention for the same money" in some vague sense. Two measured facts about it:</p>
+
+<ul>
+  <li><strong>It changes the answer, so it is a real change of function.</strong> On this page's example, one 4-wide head and two 2-wide heads disagree in the output by 0.0388 — comparable to the values themselves. A single (T × T) average per token is a bottleneck: everything the layer can move between positions has to fit through one distribution. <em>"With a single attention head, averaging inhibits this."</em></li>
+  <li><strong>It costs about the same.</strong> The paper: <em>"we employ h = 8 parallel attention layers, or heads. For each of these we use d<sub>k</sub> = d<sub>v</sub> = d<sub>model</sub>/h = 64. Due to the reduced dimension of each head, the total computational cost is similar to that of single-head attention with full dimensionality."</em> The QK<sup>T</sup> work is T²·C either way; the split just decides whether it is one T²·C matmul or H of T²·(C/H).</li>
+</ul>
+
+<p>And there is a measured cost to getting the number wrong: the paper's Table 3 reports that <em>"single-head attention is 0.9 BLEU worse than the best setting"</em>, while <em>"quality also drops off with too many heads"</em>. GPT-2 keeps 64-wide heads like the paper and uses 12 of them (<code>n_embd = 768</code>, <code>n_head = 12</code>, so <code>dh = 64</code>) — that is the same shape nanoGPT trains, and the block you are about to read.</p>
+
+<p>One caveat about what you are writing: the heads in your exercise are <strong>independent</strong>. Nothing mixes head 0's output with head 1's until a learned output projection <code>W<sup>O</sup></code> is applied to the concatenation — in nanoGPT that is one line, <code>self.c_proj(y)</code>. Without it, a head can only ever write into its own slice of the width. The checks test exactly that: change one head's slice of <code>V</code> and the other heads' output columns do not move by one bit.</p>
+
+<h2>4 · Write it</h2>
+
+<p>Four functions in <code>exercises/0003_multihead.py</code>: the split, its inverse, the per-head weights, and the whole block. The example in the file uses the same four tokens as lessons 01 and 02, with <code>C = 4</code> and two heads of width 2 — and head 0's slice is literally lesson 01's <code>Q</code> and <code>K</code>, so its weights should reproduce lesson 02's table exactly.</p>
+
+<div id="exercise"></div>
+
+<h2>5 · Watch it work</h2>
+
+<p>Same tokens, width 4, two heads. Run your code and every grid below becomes <em>yours</em>.</p>
+
+<div class="controls">
+  <button class="btn btn--primary" id="recompute">Re-check and redraw</button>
+</div>
+<div id="watch"></div>
+
+<h2>6 · The same thing in production</h2>
+
+<p>Three additions separate your four functions from a trained model's attention block, and you have now seen all three:</p>
+
+<ol>
+  <li><strong>The projections are learned.</strong> Your exercise takes <code>Q</code>, <code>K</code> and <code>V</code> as given; a real block computes them as <code>self.c_attn(x).split(...)</code> — one linear layer producing all three, then split down the last axis.</li>
+  <li><strong>An output projection mixes the heads.</strong> <code>y = self.c_proj(y)</code>, a learned (C × C) matrix over the concatenated heads. This is the <code>W<sup>O</sup></code> in <code>MultiHead(Q,K,V) = Concat(head<sub>1</sub>, …, head<sub>h</sub>)W<sup>O</sup></code>. It is what lets one head's finding influence what another head contributes downstream.</li>
+  <li><strong>The fused kernel takes the head axis directly.</strong> <code>F.scaled_dot_product_attention</code> expects <code>(..., H, T, dh)</code> and <code>is_causal=True</code>, so no mask tensor is built and no Python loop runs. On this page's example your per-head lines and the kernel agree to 1.2 × 10<sup>−7</sup> (float32); the checks compare them on every run.</li>
+</ol>
+
+<p>Beyond that, production varies how many <em>key/value</em> heads exist. Two verified papers: Shazeer's <a href="https://arxiv.org/abs/1911.02150"><em>Fast Transformer Decoding: One Write-Head is All You Need</em></a> (2019) proposes <strong>multi-query attention</strong>, where "the keys and values are shared across all of the different attention heads", to cut the memory bandwidth of incremental decoding; Ainslie et al.'s <a href="https://arxiv.org/abs/2305.13245">GQA</a> (2023) generalises that to "an intermediate (more than one, less than number of query heads) number of key-value heads". Fewer K/V heads means a smaller cache to reload at every generated token — which is where this course goes next.</p>
+
+<h2>7 · Check what stuck</h2>
+
+<p>Answer from memory. Every option is the same length on purpose — no formatting hints.</p>
+
+<div id="quiz"></div>
+
+<div class="note">
+  <span class="label">Do this before you close the tab</span>
+  <p>Say the shapes out loud, once: <em>(T, C) → (T, H, dh) → (H, T, dh) → (H, T, T) → (H, T, dh) → (T, C)</em>. Then answer this without looking: why is the scale <code>1/√dh</code> and not <code>1/√C</code>? Tomorrow, without opening this page: delete all four function bodies in <code>exercises/0003_multihead.py</code> and write them again, then run <code>./bin/grade 0003</code>.</p>
+</div>
+
+<div class="source">
+  <span class="label">Primary source · read this next (10 min)</span>
+  <p><a href="https://arxiv.org/abs/1706.03762">Vaswani et al., <em>Attention Is All You Need</em></a> — read <strong>§3.2.2 "Multi-Head Attention"</strong> and <strong>Table 3 row (A)</strong> in §6.2. Two paragraphs and one table row: the projections, the <code>h = 8, d<sub>k</sub> = d<sub>v</sub> = 64</code> configuration, the cost claim, and what happens when you get the head count wrong. Everything you wrote this session is those two paragraphs in code.</p>
+  <p>Then read the block itself: <a href="https://github.com/karpathy/nanoGPT/blob/master/model.py"><code>karpathy/nanoGPT</code>, <code>model.py</code>, <code>CausalSelfAttention</code></a> — the whole class, top to bottom. You have now written every line of its attention path: the projections, the split into heads, the scale, the <code>masked_fill</code>, the softmax, the mix, the merge, the output projection, and the <code>is_causal=True</code> fast path. What is left in that file is LayerNorm, the MLP, and how the blocks are stacked.</p>
+</div>
+
+<div class="source">
+  <span class="label">Keep for later</span>
+  <p><a href="https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html">PyTorch — <code>scaled_dot_product_attention</code></a> — head dims, <code>is_causal</code>, <code>enable_gqa</code>. The single best source for how the production signature is shaped, now that shapes are your language.</p>
+  <p><a href="../reference/scaled-dot-product-attention.html">Reference sheet: scaled dot-product attention</a> (five steps, failure modes, sanity checks) and <a href="../reference/python-for-js-devs.html">Python for JS/Perl/C developers</a>.</p>
+  <p><a href="../reference/glossary.html">Glossary</a> — every term this course uses, defined once.</p>
+</div>
+
+<footer class="lesson-foot">
+  <p><strong>Ask your teacher.</strong> I'm your agent in this workspace — ask me anything this page glossed over: what a head actually specialises to in a trained model (that is the interpretability thread), why keys and values can be shared across heads but queries cannot, how the batch axis fits in, what <code>enable_gqa</code> changes in the kernel, or to check your mental model of any of those shapes.</p>
+  <p>Next lesson: the block in full — reading <code>nanoGPT</code>'s attention line by line, then what a KV cache actually reuses across generation steps.</p>
+</footer>
+
+<script src="../assets/matrix-view.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/pyexercise.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  /* Reference numbers for §5, computed in this workspace with torch 2.14.1
+     (float32) on the same tensors the learner's file uses. They are only drawn
+     when the learner's own code cannot produce numbers yet. */
+  var TOKENS = ["the", "trophy", "fit", "it"];
+  var Q_FULL = [
+    [0.2, 0.9, 0.1, 0.4],
+    [0.9, 0.2, 0.5, 0.1],
+    [0.6, 0.4, 0.7, 0.2],
+    [1.0, 0.0, 0.3, 0.8]
+  ];
+  var REFERENCE = {
+    n_head: 2,
+    d_head: 2,
+    width: 4,
+    split: [
+      [[0.2, 0.9], [0.9, 0.2], [0.6, 0.4], [1.0, 0.0]],
+      [[0.1, 0.4], [0.5, 0.1], [0.7, 0.2], [0.3, 0.8]]
+    ],
+    heads: [
+      [[1.0000, 0.0000, 0.0000, 0.0000],
+       [0.4023, 0.5977, 0.0000, 0.0000],
+       [0.3147, 0.3524, 0.3330, 0.0000],
+       [0.1938, 0.3412, 0.2571, 0.2080]],
+      [[1.0000, 0.0000, 0.0000, 0.0000],
+       [0.4841, 0.5159, 0.0000, 0.0000],
+       [0.3191, 0.3549, 0.3260, 0.0000],
+       [0.2149, 0.2753, 0.2792, 0.2307]]
+    ],
+    output: [
+      [0.1000, 0.1000, 0.1000, 0.9000],
+      [0.6379, 0.1598, 0.0484, 0.5905],
+      [0.3838, 0.3017, 0.1623, 0.4589],
+      [0.4021, 0.2835, 0.2716, 0.4472]
+    ]
+  };
+
+  var watch = document.getElementById("watch");
+
+  function pick(figure, fallback, what) {
+    if (figure && figure.source === "learner" && figure.values) {
+      return { values: figure.values, source: "your code", error: null };
+    }
+    return {
+      values: fallback,
+      source: "the reference values on this page",
+      error: (figure && figure.error) || (figure && figure.source === "absent" ? what + " is not defined" : null)
+    };
+  }
+
+  function gridOk(m, rows, cols) {
+    if (!m || m.length !== rows) return false;
+    for (var i = 0; i < rows; i++) {
+      if (!m[i] || m[i].length !== cols) return false;
+    }
+    return true;
+  }
+
+  function band(v, i, j) { return "h" + (j < dhRef ? 0 : Math.floor(j / dhRef)); }
+
+  var dhRef = REFERENCE.d_head;
+
+  function rowFixed(row) {
+    return "[ " + row.map(function (x) { return x.toFixed(2); }).join(", ") + " ]";
+  }
+
+  function topVisible(row, upto) {
+    var best = 0;
+    for (var j = 1; j <= upto; j++) { if (row[j] > row[best]) best = j; }
+    return TOKENS[best] + " " + row[best].toFixed(2);
+  }
+
+  function draw(figures) {
+    var tokens = (figures && figures.tokens) || TOKENS;
+    var nHead = (figures && figures.n_head) || REFERENCE.n_head;
+    var dh = (figures && figures.d_head) || REFERENCE.d_head;
+    var width = (figures && figures.width) || REFERENCE.width;
+    dhRef = dh;
+    var split = pick(figures && figures.split, REFERENCE.split, "split_heads()");
+    var heads = pick(figures && figures.heads, REFERENCE.heads, "head_weights()");
+    var output = pick(figures && figures.output, REFERENCE.output, "multi_head_attention()");
+
+    var html = "";
+
+    /* --- the width, banded by head --- */
+    html += '<figure><figcaption>The input, with the width banded by head: ' + nHead +
+      ' heads of width ' + dh + ' over C = ' + width + '. Nothing is copied — each head reads its own ' +
+      'columns. Here head 0 is columns 0–' + (dh - 1) + ' (the <code>Q</code> of lessons 01–02), ' +
+      'head 1 is columns ' + dh + '–' + (width - 1) + '.</figcaption>';
+    html += MatrixView.heatmap(Q_FULL, {
+      rowLabels: tokens,
+      colLabels: ["0", "1", "2", "3"].slice(0, width),
+      digits: 2,
+      intensityMax: 1,
+      corner: "Q",
+      cellClass: band
+    });
+    html += '<p class="head-key">' +
+      '<span><i class="swatch-h0"></i>head 0</span>' +
+      '<span><i class="swatch-h1"></i>head 1</span>' +
+      (nHead > 2 ? '<span><i class="swatch-h2"></i>head 2</span>' : '') +
+      (nHead > 3 ? '<span><i class="swatch-h3"></i>head 3</span>' : '') +
+      '</p>';
+    html += "</figure>";
+
+    /* --- the split, as your code produced it --- */
+    if (Array.isArray(split.values) && Array.isArray(split.values[0]) && Array.isArray(split.values[0][0])) {
+      html += "<h3>The split — " + (split.source === "your code" ? "your <code>split_heads()</code>" : split.source) + "</h3>";
+      html += '<p class="helpers">Each head is now a (T × dh) matrix of its own: ' +
+        (split.source === "your code" ? "these are your numbers" : "reference numbers, because your code cannot produce them yet") +
+        '. The batched matmul in Part C treats them exactly like H independent problems.</p>';
+      split.values.forEach(function (head, h) {
+        if (!gridOk(head, tokens.length, dh)) return;
+        html += '<figure><figcaption>head ' + h + ' of the queries — shape (' + tokens.length + ' × ' + dh +
+          '), columns ' + (h * dh) + '–' + ((h + 1) * dh - 1) + ' of the width.</figcaption>';
+        html += MatrixView.heatmap(head, {
+          rowLabels: tokens,
+          colLabels: null,
+          digits: 2,
+          intensityMax: 1,
+          corner: "Q[" + h + "]",
+          cellClass: function () { return "h" + Math.min(h, 3); }
+        });
+        html += "</figure>";
+      });
+    }
+    if (split.error) {
+      html += '<div class="console-out">your split_heads() raised: ' + MatrixView.escapeHtml(split.error) + "</div>";
+    }
+
+    /* --- one weight matrix per head --- */
+    html += "<h3>One score matrix per head</h3>";
+    if (Array.isArray(heads.values) && Array.isArray(heads.values[0]) && Array.isArray(heads.values[0][0])) {
+      heads.values.forEach(function (w, h) {
+        if (!gridOk(w, tokens.length, tokens.length)) return;
+        html += '<figure><figcaption>head ' + h + ' weights — ' +
+          (h === 0 ? "this is lesson 02's table again: same slice, same mask, same numbers" : "a different slice of the width, so a different distribution") +
+          '. Hatched cells are blocked by the causal mask: exactly 0.</figcaption>';
+        html += MatrixView.heatmap(w, {
+          rowLabels: tokens,
+          colLabels: tokens,
+          digits: 2,
+          intensityMax: 1,
+          corner: "head " + h,
+          cellText: function (v, i, j) { return i < j ? "0" : v.toFixed(2); },
+          cellClass: function (v, i, j) { return i < j ? "masked" : (i === j ? "self" : null); }
+        });
+        html += "</figure>";
+      });
+      if (heads.values[0] && heads.values[1]) {
+        var same = heads.values[0].every(function (row, i) {
+          return row.every(function (v, j) { return Math.abs(v - heads.values[1][i][j]) < 1e-6; });
+        });
+        html += '<p class="helpers">' + (same
+          ? "Both heads produced <em>identical</em> weights — that is suspicious. With different slices of the width, two heads should disagree; a shared-window average per token is the usual cause."
+          : "The two heads disagree, as they should: the same four tokens, two different distributions. One weighted average per token is a bottleneck; H of them is the point of the layer.") +
+          '</p>';
+      }
+    } else {
+      html += '<p class="helpers">The per-head weight matrices are (H × T × T) — three levels, not two.</p>';
+    }
+    if (heads.error) {
+      html += '<div class="console-out">your head_weights() raised: ' + MatrixView.escapeHtml(heads.error) + "</div>";
+    }
+
+    /* --- the merged output --- */
+    html += "<h3>The heads, back side by side</h3>";
+    if (gridOk(output.values, tokens.length, width)) {
+      html += '<figure><figcaption>The output — shape (' + tokens.length + ' × ' + width +
+        '), ' + (output.source === "your code" ? "computed by <strong>your</strong> <code>multi_head_attention()</code>" : output.source) +
+        '. Each head wrote into its own columns; nothing crossed between them.</figcaption>';
+      html += MatrixView.heatmap(output.values, {
+        rowLabels: tokens,
+        colLabels: ["0", "1", "2", "3"].slice(0, width),
+        digits: 2,
+        intensityMax: 1,
+        corner: "out",
+        cellClass: band
+      });
+      html += "</figure>";
+
+      html += "<table><thead><tr><th>token</th>";
+      for (var h = 0; h < nHead; h++) { html += "<th>head " + h + " pulls most from</th>"; }
+      html += "<th>output row</th></tr></thead><tbody>";
+      tokens.forEach(function (token, i) {
+        html += "<tr><td><code>" + token + "</code></td>";
+        for (var k = 0; k < nHead; k++) {
+          var w = heads.values[k];
+          html += "<td>" + (gridOk(w, tokens.length, tokens.length) ? topVisible(w[i], i) : "—") + "</td>";
+        }
+        html += "<td><code>" + rowFixed(output.values[i]) + "</code></td></tr>";
+      });
+      html += "</tbody></table>";
+      html += '<p class="helpers">Row <code>the</code> is <code>V[0]</code> in both halves, because a token that can see only ' +
+        'itself has nothing to average — the causal mask is doing the same job it did in lesson 02, once per head. ' +
+        'The columns are not interchangeable: swapping the heads would change the output.</p>';
+    } else {
+      html += '<p class="helpers">The output should be (T × C) — the same shape as the input. ' +
+        'If you have (H × T × dh), the heads never got merged back.</p>';
+    }
+    if (output.error) {
+      html += '<div class="console-out">your multi_head_attention() raised: ' + MatrixView.escapeHtml(output.error) + "</div>";
+    }
+
+    watch.innerHTML = html;
+  }
+
+  var runner = PyExercise.mount(document.getElementById("exercise"), {
+    lesson: "0003",
+    file: "exercises/0003_multihead.py",
+    page: "lessons/0003-several-weighted-averages.html",
+    heading: "Your implementation",
+    intro: "<p>Four stubs with the shapes in their docstrings, and an example block that checks the properties for you in the terminal: " +
+           "<code>./.venv/bin/python exercises/0003_multihead.py</code> — the split, both heads' weights, the merged output, " +
+           "and the invariants (row 0 is <code>V[0]</code>, blocked cells are exactly 0, one head reproduces lesson 02).</p>",
+    onResult: function (report) { draw(report.figures); }
+  });
+
+  document.getElementById("recompute").addEventListener("click", function () { runner.grade(); });
+  draw(null);
+
+  /* ---------- retrieval practice ---------- */
+  Quiz.mount(document.getElementById("quiz"), {
+    title: "Retrieval practice",
+    items: [
+      {
+        q: "Where do the H heads' queries, keys and values come from?",
+        options: [
+          { text: "H copies of the same Q, K and V matrices" },
+          { text: "Slices of the width, one slice per head", correct: true },
+          { text: "H independent random projections at run time" },
+          { text: "The same tensors, reused H times in a loop" }
+        ],
+        explain: "The width is divided, not copied: with <code>C = 768</code> and <code>H = 12</code> each head works on 64 columns of the same <code>Q</code>, <code>K</code> and <code>V</code>. That is why <code>view(T, H, dh).transpose(0, 1)</code> is enough to build them, and why the total cost is unchanged."
+      },
+      {
+        q: "What does <code>x.view(T, H, dh).transpose(0, 1)</code> produce?",
+        options: [
+          { text: "(T, H, dh) — the split, before the heads move" },
+          { text: "(H, dh, T) — heads outside, tokens last" },
+          { text: "(H, T, dh) — heads first, tokens second", correct: true },
+          { text: "(T, H·dh) — the heads, flattened again" }
+        ],
+        explain: "The <code>view</code> does the division and the <code>transpose</code> moves the head axis in front, so <code>[h]</code> is one head's (T × dh) tensor. The merge afterwards is <code>transpose(0, 1).reshape(T, H*dh)</code> — and it needs <code>reshape</code>, not <code>view</code>."
+      },
+      {
+        q: "Why is the scale <code>1/√dh</code> and not <code>1/√C</code>?",
+        options: [
+          { text: "Each head's dot products run over dh numbers", correct: true },
+          { text: "C is too large for the softmax to stay stable" },
+          { text: "The heads' weights have to sum to one overall" },
+          { text: "C is only needed by the output projection" }
+        ],
+        explain: "The spread of a raw score grows with the number of terms in the dot product, and a head's dot product has exactly <code>dh = C / H</code> terms. Dividing by <code>√C</code> would over-flatten every head — the lesson-01 reason, applied to the width the head actually sees."
+      },
+      {
+        q: "What does the learned output projection <code>W<sup>O</sup></code> add?",
+        options: [
+          { text: "It renormalises each row after the concat" },
+          { text: "It gives every head the same projection" },
+          { text: "It reduces the head outputs to one head" },
+          { text: "It lets the different heads interact", correct: true }
+        ],
+        explain: "After the concatenation each head occupies its own columns, so without a projection a head can only ever write into its own slice. <code>y = self.c_proj(y)</code> — <code>Concat(head<sub>1</sub>,…,head<sub>h</sub>)W<sup>O</sup></code> — is the only place where one head's finding can influence another's contribution downstream."
+      },
+      {
+        q: "From memory: write the two-step split of a (T, C) tensor into H heads.",
+        type: "recall",
+        placeholder: "the two calls, in order",
+        accept: [
+          /view\([\s\S]{0,40}transpose/i,
+          /reshape\([\s\S]{0,40}transpose/i,
+          /transpose\([\s\S]{0,40}view|transpose\([\s\S]{0,40}reshape/i,
+          /chunk[\s\S]{0,40}(stack|cat)/i,
+          /split\([\s\S]{0,60}transpose/i
+        ],
+        explain: "<code>x.view(T, H, dh).transpose(0, 1)</code>. <code>chunk</code>/<code>split</code> plus <code>stack</code> is an equally valid construction — the checks accept it. What matters is that the head axis ends up in front and the slices are contiguous blocks of the width, in order. If you had to think, come back to this one tomorrow."
+      }
+    ]
+  });
+})();
+</script>
+</body>
+</html>

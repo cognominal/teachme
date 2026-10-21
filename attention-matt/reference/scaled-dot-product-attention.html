@@ -10,21 +10,23 @@
 
 <p class="kicker">Reference · attention core</p>
 <h1>Scaled dot-product attention</h1>
-<p class="subtitle">One page: the four steps, the shapes, the two languages, the four ways it goes wrong.</p>
+<p class="subtitle">One page: the five steps, the shapes, the two languages, the ways it goes wrong.</p>
 
-<h2>The four steps</h2>
+<h2>The five steps</h2>
 
-<div class="formula">scores&nbsp; = Q · K<sup>T</sup><br>
-weights = softmax<sub>rows</sub>( scores / √d<sub>k</sub> )<br>
-output&nbsp; = weights · V</div>
+<div class="formula">scores&nbsp; = Q · K<sup>T</sup> / √d<sub>k</sub><br>
+scores&nbsp; = where mask = 0: −∞&nbsp;&nbsp;&nbsp;<span class="cmt">causal masks only (lesson 02)</span><br>
+weights = softmax<sub>rows</sub>( scores )<br>
+output&nbsp; = weights · V&nbsp;&nbsp;&nbsp;<span class="cmt">or: F.scaled_dot_product_attention(Q, K, V, is_causal=True)</span></div>
 
 <table>
   <thead><tr><th>#</th><th>Step</th><th>Shape</th><th>Why it is there</th></tr></thead>
   <tbody>
     <tr><td>1</td><td><code>Q · K<sup>T</sup></code></td><td>(T×d<sub>k</sub>)·(d<sub>k</sub>×T) → <strong>T×T</strong></td><td>dot product = similarity between one query and one key</td></tr>
     <tr><td>2</td><td><code>/ √d<sub>k</sub></code></td><td>T×T</td><td>raw score spread grows as √d<sub>k</sub>; without it softmax saturates and gradients die</td></tr>
-    <tr><td>3</td><td><code>softmax<sub>rows</sub></code></td><td>T×T</td><td>each row becomes a distribution: non-negative, sums to 1</td></tr>
-    <tr><td>4</td><td><code>· V</code></td><td>(T×T)·(T×d<sub>v</sub>) → <strong>T×d<sub>v</sub></strong></td><td>output row <em>i</em> = weighted average of all rows of V</td></tr>
+    <tr><td>3</td><td><code>masked_fill(mask == 0, −∞)</code></td><td>T×T</td><td>blocked cells get <code>exp(−∞) = 0</code> of the row, <em>before</em> normalising, so the row still sums to 1</td></tr>
+    <tr><td>4</td><td><code>softmax<sub>rows</sub></code></td><td>T×T</td><td>each row becomes a distribution over the keys it may see: non-negative, sums to 1</td></tr>
+    <tr><td>5</td><td><code>· V</code></td><td>(T×T)·(T×d<sub>v</sub>) → <strong>T×d<sub>v</sub></strong></td><td>output row <em>i</em> = weighted average of the rows of V it is allowed to read</td></tr>
   </tbody>
 </table>
 
@@ -37,7 +39,8 @@ output&nbsp; = weights · V</div>
     <tr><td><em>d<sub>k</sub></em></td><td>width of one query/key vector</td><td><code>K[0].length</code>, <code>K.shape[-1]</code></td></tr>
     <tr><td><em>d<sub>v</sub></em></td><td>width of one value vector (may differ from d<sub>k</sub>)</td><td><code>V[0].length</code></td></tr>
     <tr><td><code>q</code>, <code>k</code>, <code>v</code></td><td>the three roles: looking for · on offer · handed over</td><td>rows of Q, K, V</td></tr>
-    <tr><td><code>head</code></td><td>one independent attention over a slice of the width</td><td>extra batch dimension</td></tr>
+    <tr><td><code>head</code></td><td>one independent attention over a slice of the width</td><td>leading axis: <code>(H, T, dh)</code></td></tr>
+    <tr><td><em>H</em>, <em>dh</em></td><td>number of heads; width of one head, <code>dh = C / H</code></td><td><code>n_head</code>, <code>C // n_head</code></td></tr>
     <tr><td><em>self</em>-attention</td><td>Q, K, V all projected from the same input rows</td><td><code>W_q @ x</code>, <code>W_k @ x</code>, <code>W_v @ x</code></td></tr>
   </tbody>
 </table>
@@ -53,18 +56,38 @@ output&nbsp; = weights · V</div>
     <tr><td>transpose</td><td><code>K.transpose(-2, -1)</code> (<code>.T</code> only for 2-D)</td><td><code>transpose(K)</code></td></tr>
     <tr><td>scale</td><td><code>scores / dk ** 0.5</code></td><td><code>scale(scores, 1 / Math.sqrt(dk))</code></td></tr>
     <tr><td>row softmax</td><td><code>torch.softmax(scores, dim=-1)</code></td><td><code>softmaxRows(scores)</code></td></tr>
+    <tr><td>masking (lesson 02)</td><td><code>scores.masked_fill(mask == 0, float("-inf"))</code></td><td>not in lesson 00 — masking arrived with Python</td></tr>
+    <tr><td>the causal mask itself</td><td><code>torch.tril(torch.ones(T, T))</code>, or <code>is_causal=True</code></td><td>—</td></tr>
+    <tr><td>split into heads (lesson 03)</td><td><code>x.view(T, H, dh).transpose(0, 1)</code></td><td>—</td></tr>
+    <tr><td>merge the heads</td><td><code>heads.transpose(0, 1).reshape(T, H * dh)</code></td><td>—</td></tr>
     <tr><td>width of a query</td><td><code>Q.shape[-1]</code></td><td><code>K[0].length</code></td></tr>
     <tr><td>the whole thing</td><td><code>F.scaled_dot_product_attention(Q, K, V)</code></td><td><code>matmul(softmaxRows(scale(matmul(Q, transpose(K)), 1/Math.sqrt(K[0].length))), V)</code></td></tr>
   </tbody>
 </table>
 
 <pre><code># PyTorch, written out, batched over leading dims (batch, heads)
-def attention(Q, K, V):                       # (..., T, dk), (..., T, dk), (..., T, dv)
+def attention(Q, K, V, mask=None):            # (..., T, dk), (..., T, dk), (..., T, dv)
     dk = Q.shape[-1]
     scores = Q @ K.transpose(-2, -1) / dk ** 0.5
+    if mask is not None:
+        scores = scores.masked_fill(mask == 0, float("-inf"))   # 0 = may not look
     return torch.softmax(scores, dim=-1) @ V  # (..., T, dv)</code></pre>
 
-<h2>Four ways it goes wrong</h2>
+<p>For a causal model, the mask is <code>torch.tril(torch.ones(T, T))</code> — or you skip it entirely and ask the fused kernel: <code>F.scaled_dot_product_attention(Q, K, V, is_causal=True)</code>. Same numbers to within 3.6 × 10<sup>−7</sup> in float32 (bit-identical in float64), measured in this workspace.</p>
+
+<pre><code># Multi-head (lesson 03): the same five steps, H times, over slices of the width
+def multi_head_attention(Q, K, V, H):            # (T, C) x3
+    Qh = Q.view(T, H, C // H).transpose(0, 1)    # (H, T, dh)
+    Kh = K.view(T, H, C // H).transpose(0, 1)
+    Vh = V.view(T, H, C // H).transpose(0, 1)
+    scores = Qh @ Kh.transpose(-2, -1) / math.sqrt(C // H)   # scale by dh, not C
+    scores = scores.masked_fill(torch.tril(torch.ones(T, T)) == 0, float("-inf"))
+    weights = torch.softmax(scores, dim=-1)      # (H, T, T), every row sums to 1
+    return (weights @ Vh).transpose(0, 1).reshape(T, C)      # reshape, not view</code></pre>
+
+<p>With <code>H = 1</code> this is lesson 02 exactly (to float32 noise, measured 3 × 10<sup>−8</sup>). The heads are independent until a learned <code>W<sup>O</sup></code> mixes the concatenation — in nanoGPT, <code>y = self.c_proj(y)</code>.</p>
+
+<h2>Ways it goes wrong</h2>
 
 <table>
   <thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead>
@@ -73,7 +96,14 @@ def attention(Q, K, V):                       # (..., T, dk), (..., T, dk), (...
     <tr><td>Error "inner dimensions must match" on <code>Q · K</code></td><td>forgot to transpose K</td><td><code>Q @ K.transpose(-2, -1)</code></td></tr>
     <tr><td>Rows don't sum to 1, but columns nearly do</td><td>softmax over the wrong axis</td><td><code>dim=-1</code> (rows), <code>softmaxRows</code></td></tr>
     <tr><td>Output shape is (T×T) instead of (T×d<sub>v</sub>)</td><td>returned the weights, never multiplied by V</td><td><code>weights @ V</code></td></tr>
-    <tr><td>Token 3 influences token 1</td><td>no causal mask (decoder)</td><td>lesson 02</td></tr>
+    <tr><td>Blocked positions come back with real weights</td><td>filled the masked scores with <code>0</code> (or another finite number)</td><td><code>masked_fill(..., float("-inf"))</code> — <code>exp(0) = 1</code> invites them in</td></tr>
+    <tr><td>Rows sum to less than 1; the output drifts small</td><td>masked <em>after</em> the softmax</td><td>mask the scores, then normalise</td></tr>
+    <tr><td>The whole output is <code>NaN</code></td><td>a row with every cell blocked (padding mask, all-pad query)</td><td>keep at least one visible cell per row; a causal mask always keeps the diagonal</td></tr>
+    <tr><td><code>RuntimeError: view size is not compatible with input tensor's size and stride … Use .reshape(...) instead.</code></td><td>calling <code>.view</code> on a transposed tensor (merging heads back)</td><td><code>.reshape(T, H * dh)</code>, or <code>.contiguous().view(...)</code></td></tr>
+    <tr><td>Every head produces identical weights</td><td>the split never happened — each head is still reading all C columns</td><td>check <code>split_heads(x, H).shape == (H, T, C // H)</code> before trusting anything downstream</td></tr>
+    <tr><td>Heads are over-flattened (every row nearly one-hot)</td><td>the scale divided by C instead of <code>dh = C / H</code></td><td><code>math.sqrt(dh)</code> — the divisor is the head width</td></tr>
+    <tr><td>Output shape is (H, T, dh)</td><td>the mix is right but the heads were never merged</td><td><code>heads.transpose(0, 1).reshape(T, H * dh)</code></td></tr>
+    <tr><td>Head h's numbers appear in the last columns</td><td>heads concatenated in reverse</td><td>merge in the same order you split — head 0 first</td></tr>
   </tbody>
 </table>
 
@@ -84,17 +114,23 @@ def attention(Q, K, V):                       # (..., T, dk), (..., T, dk), (...
   <li><strong>Identical rows:</strong> if every key row is the same, every weight in a row is <code>1/T</code> — a plain average.</li>
   <li><strong>Sharpness:</strong> multiply the scaled scores by a constant <em>c</em> and the distribution sharpens as <em>c</em> grows; the scale <code>1/√d<sub>k</sub></code> exists to keep <em>c</em> ≈ 1.</li>
   <li><strong>Convexity:</strong> every output cell must lie between the smallest and largest value in that column of V. A weighted average can never leave the range of what it averages.</li>
+  <li><strong>Causal shape:</strong> row <em>i</em> of the weights has exactly <em>i</em>+1 non-zero entries and zeros after them; blocked cells are exactly <code>0.0</code>, not <code>1e-8</code>.</li>
+  <li><strong>Row 0 under a causal mask:</strong> with only itself visible, the output row equals <code>V[0]</code> exactly. If it does not, the diagonal is missing from your mask.</li>
+  <li><strong>Leak test:</strong> replace a row of <code>V</code> with something absurd; every output row <em>before</em> it must be bit-identical, and the row at that position must change.</li>
 </ul>
 
 <h2>Where this came from</h2>
 
 <ul>
   <li><a href="https://arxiv.org/abs/1706.03762">Vaswani et al., <em>Attention Is All You Need</em>, §3.2.1 and Figure 2</a> — the definition everything else paraphrases. Footnote 4 on that page is the scaling argument.</li>
-  <li><a href="https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html">PyTorch <code>scaled_dot_product_attention</code></a> — the fused production kernel; same maths, better memory behaviour.</li>
+  <li><a href="https://arxiv.org/abs/1706.03762">The same paper, §3.2.2</a> — multi-head in two paragraphs: the h learned projections, "h = 8 parallel attention layers … d_k = d_v = d_model/h = 64", the cost claim, and "Multi-head attention allows the model to jointly attend to information from different representation subspaces at different positions. With a single attention head, averaging inhibits this." Table 3 row (A) prices getting it wrong.</li>
+  <li><a href="https://arxiv.org/abs/1911.02150">Shazeer, <em>Fast Transformer Decoding: One Write-Head is All You Need</em> (2019)</a> and <a href="https://arxiv.org/abs/2305.13245">Ainslie et al., <em>GQA</em> (2023)</a> — the variants you will meet in real checkpoints: keys and values shared across all heads (MQA), or across groups of them (GQA), to shrink what generation has to reload.</li>
+  <li><a href="https://github.com/karpathy/nanoGPT/blob/master/model.py">karpathy/nanoGPT, <code>model.py</code></a> — <code>CausalSelfAttention</code>: the triangle registered as a buffer and sliced to the sequence length, the <code>masked_fill</code>, and the <code>is_causal=True</code> fast path.</li>
+  <li><a href="https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html">PyTorch <code>scaled_dot_product_attention</code></a> — the fused production kernel; same maths, better memory behaviour, and <code>is_causal</code> / <code>attn_mask</code> semantics.</li>
 </ul>
 
 <footer class="lesson-foot">
-  <p>Used by <a href="../lessons/0000-matrices-for-attention.html">Lesson 00 — Matrices</a> and <a href="../lessons/0001-attention-as-a-weighted-average.html">Lesson 01 — Attention is a weighted average</a> (Python + PyTorch from lesson 01 on; the JS crib is <a href="python-for-js-devs.html">Python for JS/Perl/C developers</a>). Ask your agent about anything on this sheet that has gone stale or unclear.</p>
+  <p>Used by <a href="../lessons/0000-matrices-for-attention.html">Lesson 00 — Matrices</a>, <a href="../lessons/0001-attention-as-a-weighted-average.html">Lesson 01 — Attention is a weighted average</a>, <a href="../lessons/0002-the-mask-and-the-scale.html">Lesson 02 — The mask and the scale</a> and <a href="../lessons/0003-several-weighted-averages.html">Lesson 03 — Several weighted averages at once</a> (Python + PyTorch from lesson 01 on; the JS crib is <a href="python-for-js-devs.html">Python for JS/Perl/C developers</a>). Ask your agent about anything on this sheet that has gone stale or unclear.</p>
 </footer>
 
 </body>
